@@ -850,6 +850,18 @@ if(WITH_FUSE)
 endif()
 install(TARGETS ceph-osd DESTINATION bin)
 
+set(ceph_osd_s_srcs
+  ceph_osd_s.cc)
+add_executable(ceph-osd-s ${ceph_osd_s_srcs}
+  $<TARGET_OBJECTS:common_util_obj>)
+add_dependencies(ceph-osd-s erasure_code_plugins)
+target_link_libraries(ceph-osd-s osd os global-static common
+  ${BLKID_LIBRARIES} ${RDMA_LIBRARIES})
+if(WITH_FUSE)
+  target_link_libraries(ceph-osd-s ${FUSE_LIBRARIES})
+endif()
+install(TARGETS ceph-osd-s DESTINATION bin)
+
 add_subdirectory(mds)
 set(ceph_mds_srcs
   ceph_mds.cc)
