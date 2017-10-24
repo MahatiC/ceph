@@ -16,6 +16,8 @@
 namespace librbd {
 namespace io {
 
+int bl_len = 0;
+
 struct ReadResult::SetClipLengthVisitor : public boost::static_visitor<void> {
   size_t length;
 
@@ -71,11 +73,24 @@ struct ReadResult::AssembleResultVisitor : public boost::static_visitor<void> {
 
   void operator()(Bufferlist &bufferlist) const {
     bufferlist.bl->clear();
-    destriper.assemble_result(cct, *bufferlist.bl, true);
+    //destriper.assemble_result(cct, *bufferlist.bl, true);
 
     ldout(cct, 20) << "moved resulting " << bufferlist.bl->length() << " "
                    << "bytes to bl " << reinterpret_cast<void*>(bufferlist.bl)
                    << dendl;
+    int TEST_IO_SIZE = bl_len;
+    char test_data[TEST_IO_SIZE + 1];
+    int i;
+
+    for (i = 0; i < TEST_IO_SIZE; ++i) {
+      test_data[i] = (char) (rand() % (126 - 33) + 33);
+    }
+    test_data[TEST_IO_SIZE] = '\0';
+
+    const char *data  = &test_data[0];
+    unsigned len = TEST_IO_SIZE + 1;
+    bufferptr bp(data, len);
+    bufferlist.bl->push_front(std::move(bp));
   }
 };
 
@@ -122,6 +137,7 @@ void ReadResult::C_SparseReadRequestBase::finish(ExtentMap &extent_map,
     ldout(cct, 10) << " got " << extent_map
                    << " for " << buffer_extents
                    << " bl " << bl.length() << dendl;
+    bl_len = length;
     // reads from the parent don't populate the m_ext_map and the overlap
     // may not be the full buffer.  compensate here by filling in m_ext_map
     // with the read extent when it is empty.
@@ -129,8 +145,8 @@ void ReadResult::C_SparseReadRequestBase::finish(ExtentMap &extent_map,
       extent_map[offset] = bl.length();
     }
 
-    aio_completion->read_result.m_destriper.add_partial_sparse_result(
-      cct, bl, extent_map, offset, buffer_extents);
+    //aio_completion->read_result.m_destriper.add_partial_sparse_result(
+    //  cct, bl, extent_map, offset, buffer_extents);
     r = length;
   }
   aio_completion->lock.Unlock();

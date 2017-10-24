@@ -3115,6 +3115,26 @@ void Objecter::_send_op(Op *op, MOSDOp *m)
   // op->session->lock is locked
 
   // backoff?
+  ldout(cct, 20) << "in send_op: " << dendl;
+  ldout(cct, 20) << op->ops << dendl;
+  bool set_alloc = false;
+  for (vector<OSDOp>::iterator p = op->ops.begin(); p != op->ops.end(); ++p) {
+    if (p->op.op == CEPH_OSD_OP_SETALLOCHINT) {
+      ldout(cct, 20) << "OP_SETALLOCHINT" << dendl;
+      set_alloc = true;
+    }
+    if (p->op.op == CEPH_OSD_OP_SPARSE_READ) {
+      ldout(cct, 20) << "OP_SPARSE_READ" << dendl;
+      return handle_alt_osd_reply(op);
+    }
+    if (p->op.op == CEPH_OSD_OP_WRITE) {
+      ldout(cct, 20) << "OP_WRITE" << dendl;
+      if (set_alloc) {
+        return handle_alt_osd_reply(op);
+      }
+    }
+  }
+
   hobject_t hoid = op->target.get_hobj();
   auto p = op->session->backoffs.find(op->target.actual_pgid);
   if (p != op->session->backoffs.end()) {
@@ -3236,6 +3256,33 @@ void Objecter::unregister_op(Op *op)
   op->session = NULL;
 
   inflight_ops.dec();
+}
+
+void Objecter::handle_alt_osd_reply(Op *op)
+{
+  ldout(cct, 10) << "in handle_alt_reply" << dendl;
+
+  /*unsigned len = 20;
+  std::string str(len, 'c');
+  (op->out_bl[0])->append(str.c_str(), 20);*/
+
+  //Context* handler = op->out_handler[0];
+  //handler->complete(0);
+
+  Context *onfinish = 0;
+
+  if (op->onfinish) {
+    num_in_flight.dec();
+    onfinish = op->onfinish;
+    op->onfinish = NULL;
+  }
+
+  _finish_op(op, 0);
+
+  // do callbacks
+  if (onfinish) {
+    onfinish->complete(0);
+  }
 }
 
 /* This function DOES put the passed message before returning */

@@ -2070,6 +2070,8 @@ private:
   void handle_osd_map(class MOSDMap *m);
   void wait_for_osd_map();
 
+  void handle_alt_osd_reply(Op *op);
+
   int pool_snap_by_name(int64_t poolid,
 			const char *snap_name,
 			snapid_t *snap) const;
