@@ -10,7 +10,6 @@
 #include "include/rados/librados_fwd.hpp"
 #include "common/Cond.h"
 #include "common/Mutex.h"
-#include "common/Cond.h"
 #include "common/WorkQueue.h"
 #include "journal/Future.h"
 #include "journal/JournalMetadataListener.h"
