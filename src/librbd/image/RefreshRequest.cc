@@ -816,7 +816,7 @@ void RefreshRequest<I>::send_v2_init_exclusive_lock() {
 
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_init_exclusive_lock>(this);
+    klass, &klass::handle_v2_init_exclusive_lock>(this, m_exclusive_lock);
 
   RWLock::RLocker owner_locker(m_image_ctx.owner_lock);
   m_exclusive_lock->init(m_features, ctx);
@@ -874,12 +874,13 @@ void RefreshRequest<I>::send_v2_open_journal() {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
+  m_journal = m_image_ctx.create_journal();
+
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_open_journal>(this);
+    klass, &klass::handle_v2_open_journal>(this, m_journal);
 
   // TODO need safe close
-  m_journal = m_image_ctx.create_journal();
   m_journal->open(ctx);
 }
 
@@ -979,7 +980,7 @@ void RefreshRequest<I>::send_v2_open_object_map() {
 
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_open_object_map>(this);
+    klass, &klass::handle_v2_open_object_map>(this, m_object_map);
   m_object_map->open(ctx);
 }
 
@@ -991,7 +992,7 @@ Context *RefreshRequest<I>::handle_v2_open_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to open object map: " << cpp_strerror(*result)
                << dendl;
-    delete m_object_map;
+    m_object_map->put();
     m_object_map = nullptr;
   }
 
@@ -1062,7 +1063,7 @@ Context *RefreshRequest<I>::send_v2_shut_down_exclusive_lock() {
   // flushed and in-flight requests will be canceled before releasing lock
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_shut_down_exclusive_lock>(this);
+    klass, &klass::handle_v2_shut_down_exclusive_lock>(this, m_exclusive_lock);
   m_exclusive_lock->shut_down(ctx);
   return nullptr;
 }
@@ -1084,7 +1085,7 @@ Context *RefreshRequest<I>::handle_v2_shut_down_exclusive_lock(int *result) {
   }
 
   ceph_assert(m_exclusive_lock != nullptr);
-  delete m_exclusive_lock;
+  m_exclusive_lock->put();
   m_exclusive_lock = nullptr;
 
   return send_v2_close_journal();
@@ -1102,7 +1103,7 @@ Context *RefreshRequest<I>::send_v2_close_journal() {
   // journal feature was dynamically disabled
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_close_journal>(this);
+    klass, &klass::handle_v2_close_journal>(this, m_journal);
   m_journal->close(ctx);
   return nullptr;
 }
@@ -1119,7 +1120,7 @@ Context *RefreshRequest<I>::handle_v2_close_journal(int *result) {
   }
 
   ceph_assert(m_journal != nullptr);
-  delete m_journal;
+  m_journal->put();
   m_journal = nullptr;
 
   ceph_assert(m_blocked_writes);
@@ -1141,7 +1142,7 @@ Context *RefreshRequest<I>::send_v2_close_object_map() {
   // object map was dynamically disabled
   using klass = RefreshRequest<I>;
   Context *ctx = create_context_callback<
-    klass, &klass::handle_v2_close_object_map>(this);
+    klass, &klass::handle_v2_close_object_map>(this, m_object_map);
   m_object_map->close(ctx);
   return nullptr;
 }
@@ -1153,7 +1154,8 @@ Context *RefreshRequest<I>::handle_v2_close_object_map(int *result) {
 
   ceph_assert(*result == 0);
   ceph_assert(m_object_map != nullptr);
-  delete m_object_map;
+
+  m_object_map->put();
   m_object_map = nullptr;
 
   return send_flush_aio();

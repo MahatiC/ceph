@@ -97,8 +97,13 @@ SnapshotRollbackRequest<I>::~SnapshotRollbackRequest() {
   if (m_blocking_writes) {
     image_ctx.io_work_queue->unblock_writes();
   }
-  delete m_object_map;
-  delete m_snap_object_map;
+  if (m_object_map) {
+    m_object_map->put();
+  }
+
+  if (m_snap_object_map) {
+    m_snap_object_map->put();
+  }
 }
 
 template <typename I>
@@ -241,7 +246,7 @@ void SnapshotRollbackRequest<I>::send_rollback_object_map() {
 
       Context *ctx = create_context_callback<
         SnapshotRollbackRequest<I>,
-        &SnapshotRollbackRequest<I>::handle_rollback_object_map>(this);
+        &SnapshotRollbackRequest<I>::handle_rollback_object_map>(this, image_ctx.object_map);
       image_ctx.object_map->rollback(m_snap_id, ctx);
       return;
     }
@@ -326,7 +331,7 @@ Context *SnapshotRollbackRequest<I>::send_refresh_object_map() {
 
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
-    &SnapshotRollbackRequest<I>::handle_refresh_object_map>(this);
+    &SnapshotRollbackRequest<I>::handle_refresh_object_map>(this, m_object_map);
   m_object_map->open(ctx);
   return nullptr;
 }
