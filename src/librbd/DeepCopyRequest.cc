@@ -256,7 +256,6 @@ void DeepCopyRequest<I>::send_refresh_object_map() {
   }
 
   ldout(m_cct, 20) << dendl;
-
   auto ctx = new FunctionContext([this, finish_op_ctx](int r) {
       handle_refresh_object_map(r);
       finish_op_ctx->complete(0);
@@ -282,7 +281,7 @@ void DeepCopyRequest<I>::handle_refresh_object_map(int r) {
     RWLock::WLocker image_locker(m_dst_image_ctx->image_lock);
     std::swap(m_dst_image_ctx->object_map, m_object_map);
   }
-  delete m_object_map;
+  m_object_map->put();
 
   send_copy_metadata();
 }

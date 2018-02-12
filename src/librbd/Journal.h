@@ -9,6 +9,7 @@
 #include "include/interval_set.h"
 #include "include/rados/librados_fwd.hpp"
 #include "common/Cond.h"
+#include "common/RefCountedObj.h"
 #include "common/Mutex.h"
 #include "common/WorkQueue.h"
 #include "journal/Future.h"
@@ -37,7 +38,7 @@ class ImageCtx;
 namespace journal { template <typename> class Replay; }
 
 template <typename ImageCtxT = ImageCtx>
-class Journal {
+class Journal : public RefCountedObject {
 public:
   /**
    * @verbatim

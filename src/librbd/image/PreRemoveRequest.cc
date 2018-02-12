@@ -68,18 +68,19 @@ void PreRemoveRequest<I>::acquire_exclusive_lock() {
     m_image_ctx->set_journal_policy(new journal::DisabledPolicy());
   }
 
+  m_exclusive_lock = m_image_ctx->exclusive_lock;
+
   if (m_force) {
     auto ctx = create_context_callback<
       PreRemoveRequest<I>,
       &PreRemoveRequest<I>::handle_exclusive_lock_force>(this);
 
-    m_exclusive_lock = m_image_ctx->exclusive_lock;
     m_exclusive_lock->shut_down(ctx);
   } else {
     auto ctx = create_context_callback<
-      PreRemoveRequest<I>, &PreRemoveRequest<I>::handle_exclusive_lock>(this);
+      PreRemoveRequest<I>, &PreRemoveRequest<I>::handle_exclusive_lock>(this, m_exclusive_lock);
 
-    m_image_ctx->exclusive_lock->try_acquire_lock(ctx);
+    m_exclusive_lock->try_acquire_lock(ctx);
   }
 }
 
@@ -102,7 +103,7 @@ void PreRemoveRequest<I>::handle_exclusive_lock_force(int r) {
   auto cct = m_image_ctx->cct;
   ldout(cct, 5) << "r=" << r << dendl;
 
-  delete m_exclusive_lock;
+  m_exclusive_lock->put();
   m_exclusive_lock = nullptr;
 
   if (r < 0) {
