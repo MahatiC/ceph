@@ -31,6 +31,8 @@
 
 namespace librbd {
 
+using util::create_context_callback;
+
   /**
    * context to wrap another context in a Mutex
    *

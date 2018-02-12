@@ -36,6 +36,7 @@ namespace librbd {
 
 using util::create_async_context_callback;
 using util::create_context_callback;
+using util::create_ref_counted_context;
 using journal::util::C_DecodeTag;
 using journal::util::C_DecodeTags;
 
@@ -325,7 +326,8 @@ std::ostream &operator<<(std::ostream &os,
 
 template <typename I>
 Journal<I>::Journal(I &image_ctx)
-  : m_image_ctx(image_ctx), m_journaler(NULL),
+  : RefCountedObject(image_ctx.cct),
+    m_image_ctx(image_ctx), m_journaler(NULL),
     m_lock("Journal<I>::m_lock"), m_state(STATE_UNINITIALIZED),
     m_error_result(0), m_replay_handler(this), m_close_pending(false),
     m_event_lock("Journal<I>::m_event_lock"), m_event_tid(0),
@@ -564,6 +566,9 @@ void Journal<I>::open(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << dendl;
 
+  using klass = Journal<I>;
+  on_finish = create_ref_counted_context<klass>(this, on_finish);
+
   on_finish = create_async_context_callback(m_image_ctx, on_finish);
 
   // inject our handler into the object dispatcher chain
@@ -580,6 +585,9 @@ template <typename I>
 void Journal<I>::close(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << dendl;
+
+  using klass = Journal<I>;
+  on_finish = create_ref_counted_context<klass>(this, on_finish);
 
   on_finish = new FunctionContext([this, on_finish](int r) {
       // remove our handler from object dispatcher chain - preserve error
@@ -938,6 +946,9 @@ void Journal<I>::flush_event(uint64_t tid, Context *on_safe) {
   ldout(cct, 20) << this << " " << __func__ << ": tid=" << tid << ", "
                  << "on_safe=" << on_safe << dendl;
 
+  using klass = Journal<I>;
+  on_safe = create_ref_counted_context<klass>(this, on_safe);
+
   Future future;
   {
     Mutex::Locker event_locker(m_event_lock);
@@ -954,6 +965,9 @@ void Journal<I>::wait_event(uint64_t tid, Context *on_safe) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << this << " " << __func__ << ": tid=" << tid << ", "
                  << "on_safe=" << on_safe << dendl;
+
+  using klass = Journal<I>;
+  on_safe = create_ref_counted_context<klass>(this, on_safe);
 
   Mutex::Locker event_locker(m_event_lock);
   wait_event(m_lock, tid, on_safe);
