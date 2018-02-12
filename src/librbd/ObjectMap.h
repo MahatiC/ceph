@@ -8,6 +8,7 @@
 #include "include/fs_types.h"
 #include "include/rbd/object_map_types.h"
 #include "common/bit_vector.hpp"
+#include "common/RefCountedObj.h"
 #include "librbd/Utils.h"
 #include <boost/optional.hpp>
 
@@ -23,7 +24,7 @@ struct BlockGuardCell;
 class ImageCtx;
 
 template <typename ImageCtxT = ImageCtx>
-class ObjectMap {
+class ObjectMap : public RefCountedObject {
 public:
   static ObjectMap *create(ImageCtxT &image_ctx, uint64_t snap_id) {
     return new ObjectMap(image_ctx, snap_id);
@@ -71,6 +72,8 @@ public:
                   const ZTracer::Trace &parent_trace, bool ignore_enoent,
                   T *callback_object) {
     ceph_assert(start_object_no < end_object_no);
+
+    Context *ctx = util::create_context_callback<T, MF>(callback_object, this);
     if (snap_id == CEPH_NOSNAP) {
       end_object_no = std::min(end_object_no, m_object_map.size());
       if (start_object_no >= end_object_no) {
@@ -91,14 +94,11 @@ public:
 
       UpdateOperation update_operation(start_object_no, end_object_no,
                                        new_state, current_state, parent_trace,
-                                       ignore_enoent,
-                                       util::create_context_callback<T, MF>(
-                                         callback_object));
+                                       ignore_enoent, ctx);
       detained_aio_update(std::move(update_operation));
     } else {
       aio_update(snap_id, start_object_no, end_object_no, new_state,
-                 current_state, parent_trace, ignore_enoent,
-                 util::create_context_callback<T, MF>(callback_object));
+                 current_state, parent_trace, ignore_enoent, ctx);
     }
     return true;
   }

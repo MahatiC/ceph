@@ -31,6 +31,8 @@
 
 namespace librbd {
 
+using util::create_context_callback;
+
   /**
    * callback to finish a rados completion as a Context
    *
