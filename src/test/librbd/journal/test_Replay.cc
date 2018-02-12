@@ -65,8 +65,6 @@ public:
     C_SaferCond close_cond;
     ictx->journal->close(&close_cond);
     ASSERT_EQ(0, close_cond.wait());
-    delete ictx->journal;
-    ictx->journal = nullptr;
 
     C_SaferCond cond;
     uint64_t minimum_set;

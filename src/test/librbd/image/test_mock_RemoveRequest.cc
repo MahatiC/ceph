@@ -395,7 +395,7 @@ TEST_F(TestMockImageRemoveRequest, SuccessV2CloneV2) {
 
   MockPreRemoveRequest mock_pre_remove_request;
   expect_pre_remove_image(*m_mock_imctx, mock_pre_remove_request, 0);
-
+  
   MockTrimRequest mock_trim_request;
   expect_trim(*m_mock_imctx, mock_trim_request, 0);
 
