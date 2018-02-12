@@ -8,6 +8,7 @@
 #include "librbd/object_map/RefreshRequest.h"
 #include "librbd/object_map/UnlockRequest.h"
 #include "librbd/object_map/UpdateRequest.h"
+#include <boost/scope_exit.hpp>
 
 namespace librbd {
 
@@ -172,9 +173,13 @@ TEST_F(TestMockObjectMap, NonDetainedUpdate) {
   MockUnlockRequest mock_unlock_request;
   expect_unlock(mock_image_ctx, mock_unlock_request, 0);
 
-  MockObjectMap mock_object_map(mock_image_ctx, CEPH_NOSNAP);
+  MockObjectMap *mock_object_map = new MockObjectMap(mock_image_ctx, CEPH_NOSNAP);
+  BOOST_SCOPE_EXIT(&mock_object_map) {
+    mock_object_map->put();
+  } BOOST_SCOPE_EXIT_END
+
   C_SaferCond open_ctx;
-  mock_object_map.open(&open_ctx);
+  mock_object_map->open(&open_ctx);
   ASSERT_EQ(0, open_ctx.wait());
 
   C_SaferCond update_ctx1;
@@ -182,8 +187,8 @@ TEST_F(TestMockObjectMap, NonDetainedUpdate) {
   {
     RWLock::RLocker snap_locker(mock_image_ctx.snap_lock);
     RWLock::WLocker object_map_locker(mock_image_ctx.object_map_lock);
-    mock_object_map.aio_update(CEPH_NOSNAP, 0, 1, {}, {}, false, &update_ctx1);
-    mock_object_map.aio_update(CEPH_NOSNAP, 1, 1, {}, {}, false, &update_ctx2);
+    mock_object_map->aio_update(CEPH_NOSNAP, 0, 1, {}, {}, false, &update_ctx1);
+    mock_object_map->aio_update(CEPH_NOSNAP, 1, 1, {}, {}, false, &update_ctx2);
   }
 
   finish_update_2->complete(0);
@@ -193,7 +198,7 @@ TEST_F(TestMockObjectMap, NonDetainedUpdate) {
   ASSERT_EQ(0, update_ctx1.wait());
 
   C_SaferCond close_ctx;
-  mock_object_map.close(&close_ctx);
+  mock_object_map->close(&close_ctx);
   ASSERT_EQ(0, close_ctx.wait());
 }
 
@@ -228,9 +233,13 @@ TEST_F(TestMockObjectMap, DetainedUpdate) {
   MockUnlockRequest mock_unlock_request;
   expect_unlock(mock_image_ctx, mock_unlock_request, 0);
 
-  MockObjectMap mock_object_map(mock_image_ctx, CEPH_NOSNAP);
+  MockObjectMap *mock_object_map = new MockObjectMap(mock_image_ctx, CEPH_NOSNAP);
+  BOOST_SCOPE_EXIT(&mock_object_map) {
+    mock_object_map->put();
+  } BOOST_SCOPE_EXIT_END
+
   C_SaferCond open_ctx;
-  mock_object_map.open(&open_ctx);
+  mock_object_map->open(&open_ctx);
   ASSERT_EQ(0, open_ctx.wait());
 
   C_SaferCond update_ctx1;
@@ -240,13 +249,13 @@ TEST_F(TestMockObjectMap, DetainedUpdate) {
   {
     RWLock::RLocker snap_locker(mock_image_ctx.snap_lock);
     RWLock::WLocker object_map_locker(mock_image_ctx.object_map_lock);
-    mock_object_map.aio_update(CEPH_NOSNAP, 1, 4, 1, {}, {}, false,
+    mock_object_map->aio_update(CEPH_NOSNAP, 1, 4, 1, {}, {}, false,
                                &update_ctx1);
-    mock_object_map.aio_update(CEPH_NOSNAP, 1, 3, 1, {}, {}, false,
+    mock_object_map->aio_update(CEPH_NOSNAP, 1, 3, 1, {}, {}, false,
                                &update_ctx2);
-    mock_object_map.aio_update(CEPH_NOSNAP, 2, 3, 1, {}, {}, false,
+    mock_object_map->aio_update(CEPH_NOSNAP, 2, 3, 1, {}, {}, false,
                                &update_ctx3);
-    mock_object_map.aio_update(CEPH_NOSNAP, 0, 2, 1, {}, {}, false,
+    mock_object_map->aio_update(CEPH_NOSNAP, 0, 2, 1, {}, {}, false,
                                &update_ctx4);
   }
 
@@ -270,7 +279,7 @@ TEST_F(TestMockObjectMap, DetainedUpdate) {
   ASSERT_EQ(0, update_ctx4.wait());
 
   C_SaferCond close_ctx;
-  mock_object_map.close(&close_ctx);
+  mock_object_map->close(&close_ctx);
   ASSERT_EQ(0, close_ctx.wait());
 }
 
