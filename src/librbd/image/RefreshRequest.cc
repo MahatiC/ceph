@@ -54,9 +54,6 @@ RefreshRequest<I>::RefreshRequest(I &image_ctx, bool acquiring_lock,
 template <typename I>
 RefreshRequest<I>::~RefreshRequest() {
   // these require state machine to close
-  ceph_assert(m_exclusive_lock == nullptr);
-  ceph_assert(m_object_map == nullptr);
-  ceph_assert(m_journal == nullptr);
   ceph_assert(m_refresh_parent == nullptr);
   ceph_assert(!m_blocked_writes);
 }
@@ -1043,8 +1040,6 @@ Context *RefreshRequest<I>::handle_v2_open_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to open object map: " << cpp_strerror(*result)
                << dendl;
-    delete m_object_map;
-    m_object_map = nullptr;
 
     if (*result != -EFBIG) {
       save_result(result);
@@ -1136,12 +1131,10 @@ Context *RefreshRequest<I>::handle_v2_shut_down_exclusive_lock(int *result) {
 
   {
     RWLock::WLocker owner_locker(m_image_ctx.owner_lock);
-    ceph_assert(m_image_ctx.exclusive_lock == nullptr);
   }
 
   ceph_assert(m_exclusive_lock != nullptr);
-  delete m_exclusive_lock;
-  m_exclusive_lock = nullptr;
+  m_exclusive_lock->put();
 
   return send_v2_close_journal();
 }
@@ -1175,8 +1168,6 @@ Context *RefreshRequest<I>::handle_v2_close_journal(int *result) {
   }
 
   ceph_assert(m_journal != nullptr);
-  delete m_journal;
-  m_journal = nullptr;
 
   ceph_assert(m_blocked_writes);
   m_blocked_writes = false;
@@ -1213,8 +1204,6 @@ Context *RefreshRequest<I>::handle_v2_close_object_map(int *result) {
   }
 
   ceph_assert(m_object_map != nullptr);
-  delete m_object_map;
-  m_object_map = nullptr;
 
   return send_flush_aio();
 }

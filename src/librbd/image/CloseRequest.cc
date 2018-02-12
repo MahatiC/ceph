@@ -110,10 +110,6 @@ void CloseRequest<I>::send_shut_down_exclusive_lock() {
 
     // if reading a snapshot -- possible object map is open
     RWLock::WLocker image_locker(m_image_ctx->image_lock);
-    if (m_exclusive_lock == nullptr) {
-      delete m_image_ctx->object_map;
-      m_image_ctx->object_map = nullptr;
-    }
   }
 
   if (m_exclusive_lock == nullptr) {
@@ -145,9 +141,7 @@ void CloseRequest<I>::handle_shut_down_exclusive_lock(int r) {
     ceph_assert(m_image_ctx->object_map == nullptr);
   }
 
-  delete m_exclusive_lock;
-  m_exclusive_lock = nullptr;
-
+  m_exclusive_lock->put();
   save_result(r);
   if (r < 0) {
     lderr(cct) << "failed to shut down exclusive lock: " << cpp_strerror(r)

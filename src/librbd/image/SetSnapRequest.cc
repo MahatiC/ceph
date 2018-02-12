@@ -32,8 +32,9 @@ template <typename I>
 SetSnapRequest<I>::~SetSnapRequest() {
   ceph_assert(!m_writes_blocked);
   delete m_refresh_parent;
-  delete m_object_map;
-  delete m_exclusive_lock;
+  if (m_exclusive_lock) {
+    m_exclusive_lock->put();
+  }
 }
 
 template <typename I>
@@ -275,8 +276,6 @@ Context *SetSnapRequest<I>::handle_open_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << "failed to open object map: " << cpp_strerror(*result)
                << dendl;
-    delete m_object_map;
-    m_object_map = nullptr;
   }
 
   *result = apply();

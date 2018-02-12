@@ -97,8 +97,6 @@ SnapshotRollbackRequest<I>::~SnapshotRollbackRequest() {
   if (m_blocking_writes) {
     image_ctx.io_work_queue->unblock_writes();
   }
-  delete m_object_map;
-  delete m_snap_object_map;
 }
 
 template <typename I>
@@ -225,8 +223,6 @@ Context *SnapshotRollbackRequest<I>::handle_get_snap_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << this << " " << __func__ << ": failed to open object map: "
                << cpp_strerror(*result) << dendl;
-    delete m_snap_object_map;
-    m_snap_object_map = nullptr;
   }
 
   send_rollback_object_map();
@@ -354,8 +350,6 @@ Context *SnapshotRollbackRequest<I>::handle_refresh_object_map(int *result) {
   if (*result < 0) {
     lderr(cct) << this << " " << __func__ << ": failed to open object map: "
                << cpp_strerror(*result) << dendl;
-    delete m_object_map;
-    m_object_map = nullptr;
     apply();
 
     return this->create_context_finisher(*result);
@@ -374,6 +368,7 @@ Context *SnapshotRollbackRequest<I>::send_invalidate_cache() {
   ldout(cct, 5) << this << " " << __func__ << dendl;
 
   RWLock::RLocker owner_lock(image_ctx.owner_lock);
+
   Context *ctx = create_context_callback<
     SnapshotRollbackRequest<I>,
     &SnapshotRollbackRequest<I>::handle_invalidate_cache>(this);

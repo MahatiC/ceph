@@ -102,8 +102,7 @@ void PreRemoveRequest<I>::handle_exclusive_lock_force(int r) {
   auto cct = m_image_ctx->cct;
   ldout(cct, 5) << "r=" << r << dendl;
 
-  delete m_exclusive_lock;
-  m_exclusive_lock = nullptr;
+  m_exclusive_lock->put();
 
   if (r < 0) {
     lderr(cct) << "error shutting down exclusive lock: " << cpp_strerror(r)
@@ -112,7 +111,6 @@ void PreRemoveRequest<I>::handle_exclusive_lock_force(int r) {
     return;
   }
 
-  ceph_assert(m_image_ctx->exclusive_lock == nullptr);
   validate_image_removal();
 }
 

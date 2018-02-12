@@ -157,9 +157,6 @@ public:
 
   ImageCtx::~ImageCtx() {
     ceph_assert(image_watcher == NULL);
-    ceph_assert(exclusive_lock == NULL);
-    ceph_assert(object_map == NULL);
-    ceph_assert(journal == NULL);
     ceph_assert(asok_hook == NULL);
 
     if (perfcounter) {
