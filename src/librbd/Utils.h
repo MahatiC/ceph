@@ -10,7 +10,6 @@
 #include "common/zipkin_trace.h"
 
 #include <atomic>
-#include <type_traits>
 
 namespace librbd {
 
@@ -44,6 +43,28 @@ void rados_state_callback(rados_completion_t c, void *arg) {
   }
 }
 
+template <typename T>
+class C_ContextCallbackAdapter : public Context {
+  T *obj;
+  Context *on_finish;
+
+public:
+  C_ContextCallbackAdapter(T *obj, Context *on_finish)
+    : obj(obj), on_finish(on_finish) {
+    obj->get();
+  }
+
+  ~C_ContextCallbackAdapter() {
+    obj->put();
+  }
+
+protected:
+  void finish(int r) override {
+    on_finish->complete(r);
+  }
+
+};
+
 template <typename T, void (T::*MF)(int)>
 class C_CallbackAdapter : public Context {
   T *obj;
@@ -54,6 +75,25 @@ public:
 protected:
   void finish(int r) override {
     (obj->*MF)(r);
+  }
+};
+
+template <typename T, void (T::*MF)(int), typename R>
+class C_RefCallbackAdapter : public Context {
+  R *refptr;
+  Context *on_finish;
+
+public:
+  C_RefCallbackAdapter(T *obj, R *refptr)
+    : refptr(refptr),
+      on_finish(new C_CallbackAdapter<T, MF>(obj)) {
+    refptr->get();
+  }
+
+protected:
+  void finish(int r) override {
+    on_finish->complete(r);
+    refptr->put();
   }
 };
 
@@ -76,6 +116,25 @@ protected:
     Context::complete(r);
   }
   void finish(int r) override {
+  }
+};
+
+template <typename T, Context*(T::*MF)(int*), typename R, bool destroy>
+class C_RefStateCallbackAdapter : public Context {
+  R *refptr;
+  Context *on_finish;
+
+public:
+  C_RefStateCallbackAdapter(T *obj, R *refptr)
+    : refptr(refptr),
+      on_finish(new C_StateCallbackAdapter<T, MF, destroy>(obj)) {
+    refptr->get();
+  }
+
+protected:
+  void finish(int r) override {
+    on_finish->complete(r);
+    refptr->put();
   }
 };
 
@@ -132,9 +191,24 @@ Context *create_context_callback(T *obj) {
   return new detail::C_CallbackAdapter<T, MF>(obj);
 }
 
+template <typename T, void(T::*MF)(int) = &T::complete, typename R>
+Context *create_context_callback(T *obj, R *refptr) {
+  return new detail::C_RefCallbackAdapter<T, MF, R>(obj, refptr);
+}
+
 template <typename T, Context*(T::*MF)(int*), bool destroy=true>
 Context *create_context_callback(T *obj) {
   return new detail::C_StateCallbackAdapter<T, MF, destroy>(obj);
+}
+
+template <typename T, Context*(T::*MF)(int*), typename R, bool destroy=true>
+Context *create_context_callback(T *obj, R *refptr) {
+  return new detail::C_RefStateCallbackAdapter<T, MF, R, destroy>(obj, refptr);
+}
+
+template <typename T>
+Context *create_ref_counted_context(T *obj, Context *on_finish) {
+  return new detail::C_ContextCallbackAdapter<T>(obj, on_finish);
 }
 
 template <typename I>
