@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include "Finisher.h"
+#include <sys/eventfd.h>
 
 #define dout_subsys ceph_subsys_finisher
 #undef dout_prefix
@@ -11,6 +12,16 @@ void Finisher::start()
 {
   ldout(cct, 10) << __func__ << dendl;
   finisher_thread.create(thread_name.c_str());
+}
+
+void Finisher::epoll_init()
+{
+   ldout(cct, 10) << "finisher epoll enter " << dendl;
+   efd =  eventfd(0, EFD_NONBLOCK);
+   event_socket.init(efd, EVENT_TYPE_EVENTFD);
+   epoll_event.init();
+   epoll_event.add_event(efd);
+   ldout(cct, 10) << "finisher_epoll added event" << dendl;
 }
 
 void Finisher::stop()
@@ -63,10 +74,23 @@ void *Finisher::finisher_thread_entry()
 	count = ls.size();
       }
 
-      // Now actually process the contexts.
-      for (auto p : ls) {
-	p.first->complete(p.second);
+      if(epoll) {
+        int retval = epoll_event.process_fevents();
+        if (retval > 0) {
+          ldout(cct, 20) << "Process epoll aio events " << ls << dendl;
+          for (auto p : ls) {
+            p.first->complete(p.second);
+          }
+        }
       }
+      // Now actually process the contexts.
+      else {
+        ldout(cct, 20) << "Process contexts in thread instead of epoll " << dendl;
+        for (auto p : ls) {
+	  p.first->complete(p.second);
+        }
+      }
+
       ldout(cct, 10) << "finisher_thread done with " << ls << dendl;
       ls.clear();
       if (logger) {

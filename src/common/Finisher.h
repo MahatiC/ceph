@@ -18,6 +18,9 @@
 #include "common/Mutex.h"
 #include "common/Cond.h"
 #include "common/perf_counters.h"
+#include "common/epoll_event.h"
+#include "common/event_socket.h"
+#include <sys/eventfd.h>
 
 class CephContext;
 
@@ -61,7 +64,20 @@ class Finisher {
   } finisher_thread;
 
  public:
+  EventSocket event_socket;
+  EpollEvent epoll_event;
+  int efd = -1;
+  bool epoll = false;
+
+  enum {
+    EVENT_TYPE_PIPE = 1,
+    EVENT_TYPE_EVENTFD = 2
+  };
   /// Add a context to complete, optionally specifying a parameter for the complete function.
+  void notify() {
+    event_socket.notify();
+  }
+
   void queue(Context *c, int r = 0) {
     finisher_lock.Lock();
     if (finisher_queue.empty()) {
@@ -112,6 +128,9 @@ class Finisher {
     finisher_lock.Unlock();
     ls.clear();
   }
+
+  /// start epoll
+  void epoll_init();
 
   /// Start the worker thread.
   void start();

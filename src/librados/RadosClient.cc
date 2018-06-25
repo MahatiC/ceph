@@ -343,6 +343,10 @@ int librados::RadosClient::connect()
 
   timer.init();
 
+  //create fd and initialize event socket
+  finisher.epoll = true;
+  finisher.epoll_init();
+
   finisher.start();
 
   state = CONNECTED;
@@ -390,6 +394,7 @@ void librados::RadosClient::shutdown()
     }
     finisher.wait_for_empty();
     finisher.stop();
+
   }
   state = DISCONNECTED;
   instance_id = 0;
@@ -443,6 +448,7 @@ struct C_aio_watch_flush_Complete : public Context {
     if (c->callback_complete ||
 	c->callback_safe) {
       client->finisher.queue(new librados::C_AioComplete(c));
+      client->finisher.notify();
     }
     c->put_unlock();
   }

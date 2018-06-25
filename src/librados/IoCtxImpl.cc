@@ -102,9 +102,11 @@ struct C_aio_linger_Complete : public Context {
   }
 
   void finish(int r) override {
-    if (cancel || r < 0)
+    if (cancel || r < 0) {
       c->io->client->finisher.queue(new C_aio_linger_cancel(c->io->objecter,
                                                             linger_op));
+      c->io->client->finisher.notify();
+    }
 
     c->lock.Lock();
     c->rval = r;
@@ -114,6 +116,7 @@ struct C_aio_linger_Complete : public Context {
     if (c->callback_complete ||
 	c->callback_safe) {
       c->io->client->finisher.queue(new C_AioComplete(c));
+      c->io->client->finisher.notify();
     }
     c->put_unlock();
   }
@@ -196,6 +199,7 @@ struct C_aio_selfmanaged_snap_op_Complete : public Context {
 
     if (c->callback_complete || c->callback_safe) {
       client->finisher.queue(new librados::C_AioComplete(c));
+      client->finisher.notify();
     }
     c->put_unlock();
   }
@@ -313,6 +317,7 @@ void librados::IoCtxImpl::complete_aio_write(AioCompletionImpl *c)
     for (std::list<AioCompletionImpl*>::iterator it = waiters->second.begin();
 	 it != waiters->second.end(); ++it) {
       client->finisher.queue(new C_AioCompleteAndSafe(*it));
+      client->finisher.notify();
       (*it)->put();
     }
     aio_write_waiters.erase(waiters++);
@@ -333,6 +338,7 @@ void librados::IoCtxImpl::flush_aio_writes_async(AioCompletionImpl *c)
     ldout(client->cct, 20) << "flush_aio_writes_async no writes. (tid "
 			   << seq << ")" << dendl;
     client->finisher.queue(new C_AioCompleteAndSafe(c));
+    client->finisher.notify();
   } else {
     ldout(client->cct, 20) << "flush_aio_writes_async " << aio_write_list.size()
 			   << " writes in flight; waiting on tid " << seq << dendl;
@@ -1968,6 +1974,7 @@ void librados::IoCtxImpl::C_aio_stat_Ack::finish(int r)
 
   if (c->callback_complete) {
     c->io->client->finisher.queue(new C_AioComplete(c));
+    c->io->client->finisher.notify();
   }
 
   c->put_unlock();
@@ -1996,6 +2003,7 @@ void librados::IoCtxImpl::C_aio_stat2_Ack::finish(int r)
 
   if (c->callback_complete) {
     c->io->client->finisher.queue(new C_AioComplete(c));
+    c->io->client->finisher.notify();
   }
 
   c->put_unlock();
@@ -2026,7 +2034,9 @@ void librados::IoCtxImpl::C_aio_Complete::finish(int r)
 
   if (c->callback_complete ||
       c->callback_safe) {
+    //c->io->client->epoll_event.queue(new C_AioComplete(c));
     c->io->client->finisher.queue(new C_AioComplete(c));
+    c->io->client->finisher.notify();
   }
 
   if (c->aio_write_seq) {
@@ -2106,6 +2116,7 @@ void librados::IoCtxImpl::application_enable_async(const std::string& app_name,
   if (!client->get_required_monitor_features().contains_all(
         ceph::features::mon::FEATURE_LUMINOUS)) {
     client->finisher.queue(new C_PoolAsync_Safe(c), -EOPNOTSUPP);
+    client->finisher.notify();
     return;
   }
 

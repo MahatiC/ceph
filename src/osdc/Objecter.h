@@ -1961,6 +1961,7 @@ public:
   friend class C_DoWatchError;
 public:
   void linger_callback_flush(Context *ctx) {
+    finisher->notify();
     finisher->queue(ctx);
   }
 

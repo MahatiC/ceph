@@ -658,6 +658,7 @@ void Objecter::_linger_reconnect(LingerOp *info, int r)
       info->last_error = r;
       if (info->watch_context) {
 	finisher->queue(new C_DoWatchError(this, info, r));
+        finisher->notify();
       }
     }
     wl.unlock();
@@ -720,6 +721,7 @@ void Objecter::_linger_ping(LingerOp *info, int r, ceph::coarse_mono_time sent,
       info->last_error = r;
       if (info->watch_context) {
 	finisher->queue(new C_DoWatchError(this, info, r));
+        finisher->notify();
       }
     }
   } else {
@@ -909,6 +911,7 @@ void Objecter::handle_watch_notify(MWatchNotify *m)
       info->last_error = -ENOTCONN;
       if (info->watch_context) {
 	finisher->queue(new C_DoWatchError(this, info, -ENOTCONN));
+        finisher->notify();
       }
     }
   } else if (!info->is_watch) {
@@ -929,6 +932,7 @@ void Objecter::handle_watch_notify(MWatchNotify *m)
     }
   } else {
     finisher->queue(new C_DoWatchNotify(this, info, m));
+    finisher->notify();
   }
 }
 
