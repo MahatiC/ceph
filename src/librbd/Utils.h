@@ -19,6 +19,7 @@ class ImageCtx;
 namespace util {
 namespace detail {
 
+
 template <typename T>
 void rados_callback(rados_completion_t c, void *arg) {
   reinterpret_cast<T*>(arg)->complete(rados_aio_get_return_value(c));
