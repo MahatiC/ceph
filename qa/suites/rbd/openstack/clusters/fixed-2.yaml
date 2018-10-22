@@ -4,6 +4,8 @@ overrides:
       global:
         osd pool default size: 2
         osd crush chooseleaf type: 0
+      client:
+        rbd op threads: 8
 roles:
 - [mon.a, mgr.x, osd.0, osd.1, osd.2]
 - [client.0]

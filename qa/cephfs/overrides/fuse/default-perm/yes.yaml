@@ -3,3 +3,5 @@ overrides:
     conf:
       client:
         fuse default permissions: true
+        rbd skip partial discard: true
+        rbd op threads: 8

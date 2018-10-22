@@ -2,6 +2,9 @@ overrides:
   ceph:
     log-whitelist:
       - \(SLOW_OPS\)
+    conf:
+      client:
+        rbd op threads: 8
 tasks:
 - workunit:
     clients:
