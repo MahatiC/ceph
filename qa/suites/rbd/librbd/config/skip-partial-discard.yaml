@@ -3,3 +3,4 @@ overrides:
     conf:
       client:
         rbd skip partial discard: true
+        rbd op threads: 8

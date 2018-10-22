@@ -7,3 +7,4 @@ overrides:
     conf:
       client:
         rbd cache: true
+        rbd op threads: 8
