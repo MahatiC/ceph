@@ -7,3 +7,4 @@ overrides:
     conf:
       client:
         rbd qos iops limit: 50
+        rbd op threads: 8
