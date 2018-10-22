@@ -8,6 +8,7 @@ overrides:
         debug rbd: 20
         debug rbd_mirror: 15
         log to stderr: false
+        rbd op threads: 8
       # override to make these names predictable
       client.mirror.0:
         admin socket: /var/run/ceph/rbd-mirror.$cluster-$name.asok
