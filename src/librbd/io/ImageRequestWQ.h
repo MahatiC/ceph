@@ -9,9 +9,10 @@
 #include "common/Throttle.h"
 #include "common/WorkQueue.h"
 #include "librbd/io/Types.h"
-
+#include "include/interval_set.h"
 #include <list>
 #include <atomic>
+#include <vector>
 
 namespace librbd {
 
@@ -107,6 +108,46 @@ private:
   std::atomic<unsigned> m_io_blockers { 0 };
   std::atomic<unsigned> m_io_throttled { 0 };
 
+  typedef interval_set<uint64_t> ImageExtents;
+
+  ImageExtents m_in_flight_extents;
+
+  struct BlockedIO {
+    BlockedIO(AioCompletion *c, uint64_t off, uint64_t len, bufferlist &&bl, int op_flags, bool native_async, uint64_t tid)
+      : c(c), off(off), len(len), bl(std::move(bl)), op_flags(op_flags), native_async(native_async), tid(tid) {
+    }
+
+    AioCompletion* c;
+    uint64_t off;
+    uint64_t len;
+    bufferlist bl;
+    int op_flags;
+    bool native_async;
+    uint64_t tid;
+  };
+
+  vector<BlockedIO> m_blocked_ios;
+  ceph::mutex ordering_lock;
+
+  bool block_overlapping_io(
+    ImageExtents* in_flight_image_extents, uint64_t object_off,
+    uint64_t object_len);
+
+  void unblock_overlapping_io(uint64_t off, uint64_t len, uint64_t tid);
+  uint64_t m_last_tid = 0;
+  std::set<uint64_t> m_queued_or_blocked_io_tids;
+
+  struct QueuedFlush {
+    QueuedFlush(AioCompletion *c, bool native_async) : c(c), native_async(native_async) {}
+
+    AioCompletion* c;
+    bool native_async;
+  };
+
+  std::map<uint64_t, QueuedFlush> m_queued_flushes;
+
+  void unblock_flushes(uint64_t tid);
+
   std::list<std::pair<uint64_t, TokenBucketThrottle*> > m_throttles;
   uint64_t m_qos_enabled_flag = 0;
 
@@ -126,7 +167,8 @@ private:
 
   bool needs_throttle(ImageDispatchSpec<ImageCtxT> *item);
 
-  void finish_queued_io(ImageDispatchSpec<ImageCtxT> *req);
+  void finish_queued_io(ImageDispatchSpec<ImageCtxT> *req, bool write_op);
+  void remove_in_flight_write_ios(uint64_t off, uint64_t len, bool write_op, uint64_t tid);
   void finish_in_flight_write();
 
   int start_in_flight_io(AioCompletion *c);

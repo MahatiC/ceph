@@ -132,6 +132,20 @@ uint64_t ImageDispatchSpec<I>::extents_length() {
 }
 
 template <typename I>
+std::pair<uint64_t, uint64_t> ImageDispatchSpec<I>::get_image_extents() {
+   std::pair<uint64_t, uint64_t> image_extents = {0, 0};
+   if(this->m_image_extents.size()) {
+     image_extents = this->m_image_extents.front();
+   }
+   return image_extents;
+}
+
+template <typename I>
+uint64_t ImageDispatchSpec<I>::get_tid() {
+  return this->m_tid;
+}
+
+template <typename I>
 bool ImageDispatchSpec<I>::is_write_op() const {
   return boost::apply_visitor(IsWriteOpVisitor(), m_request);
 }

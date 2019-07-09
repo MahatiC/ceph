@@ -35,13 +35,14 @@ public:
 
     void handle(const InstanceIds& instance_ids, Instance* instance) {
       std::unique_lock<std::mutex> locker(lock);
-      for (auto& instance_id : instance_ids) {
-        ceph_assert(instance->count > 0);
-        --instance->count;
+      if(instance->count > 0) {
+        for (auto& instance_id : instance_ids) {
+          --instance->count;
 
-        instance->ids.insert(instance_id);
-        if (instance->count == 0) {
-          instance->ctx.complete(0);
+          instance->ids.insert(instance_id);
+          if (instance->count == 0) {
+            instance->ctx.complete(0);
+          }
         }
       }
     }

@@ -57,13 +57,10 @@ public:
     obj->get();
   }
 
-  ~C_ContextCallbackAdapter() {
-    obj->put();
-  }
-
 protected:
   void finish(int r) override {
     on_finish->complete(r);
+    obj->put();
   }
 
 };

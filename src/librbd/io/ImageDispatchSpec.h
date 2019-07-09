@@ -89,9 +89,9 @@ public:
 
   static ImageDispatchSpec* create_write_request(
       ImageCtxT &image_ctx, AioCompletion *aio_comp, Extents &&image_extents,
-      bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace) {
+      bufferlist &&bl, int op_flags, const ZTracer::Trace &parent_trace, uint64_t tid) {
     return new ImageDispatchSpec(image_ctx, aio_comp, std::move(image_extents),
-                                 Write{std::move(bl)}, op_flags, parent_trace);
+                                 Write{std::move(bl)}, op_flags, parent_trace, tid);
   }
 
   static ImageDispatchSpec* create_write_same_request(
@@ -146,6 +146,10 @@ public:
     return (m_throttled_flag & RBD_QOS_MASK) == RBD_QOS_MASK;
   }
 
+  std::pair<uint64_t, uint64_t> get_image_extents();
+
+  uint64_t get_tid();
+
 private:
   typedef boost::variant<Read,
                          Discard,
@@ -160,10 +164,10 @@ private:
 
   ImageDispatchSpec(ImageCtxT& image_ctx, AioCompletion* aio_comp,
                      Extents&& image_extents, Request&& request,
-                     int op_flags, const ZTracer::Trace& parent_trace)
+                     int op_flags, const ZTracer::Trace& parent_trace, uint64_t tid=0)
     : m_image_ctx(image_ctx), m_aio_comp(aio_comp),
       m_image_extents(std::move(image_extents)), m_request(std::move(request)),
-      m_op_flags(op_flags), m_parent_trace(parent_trace) {
+      m_op_flags(op_flags), m_parent_trace(parent_trace), m_tid(tid) {
     m_aio_comp->get();
   }
 
@@ -173,6 +177,7 @@ private:
   Request m_request;
   int m_op_flags;
   ZTracer::Trace m_parent_trace;
+  uint64_t m_tid;
   std::atomic<uint64_t> m_throttled_flag = 0;
 
   uint64_t extents_length();
