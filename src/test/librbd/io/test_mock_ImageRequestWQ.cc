@@ -67,6 +67,7 @@ struct ImageDispatchSpec<librbd::MockTestImageCtx> {
   MOCK_CONST_METHOD1(set_throttled, void(uint64_t));
   MOCK_CONST_METHOD2(tokens_requested, bool(uint64_t, uint64_t *));
   MOCK_CONST_METHOD0(get_image_extents, std::pair<uint64_t, uint64_t>());
+  MOCK_CONST_METHOD0(get_aio_comp, AioCompletion*());
   MOCK_CONST_METHOD0(get_tid, uint64_t());
 
   ImageDispatchSpec() {

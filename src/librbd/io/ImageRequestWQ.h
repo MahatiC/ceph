@@ -112,39 +112,18 @@ private:
 
   ImageExtents m_in_flight_extents;
 
-  struct BlockedIO {
-    BlockedIO(AioCompletion *c, uint64_t off, uint64_t len, bufferlist &&bl, int op_flags, bool native_async, uint64_t tid)
-      : c(c), off(off), len(len), bl(std::move(bl)), op_flags(op_flags), native_async(native_async), tid(tid) {
-    }
-
-    AioCompletion* c;
-    uint64_t off;
-    uint64_t len;
-    bufferlist bl;
-    int op_flags;
-    bool native_async;
-    uint64_t tid;
-  };
-
-  vector<BlockedIO> m_blocked_ios;
-  ceph::mutex ordering_lock;
+  vector<ImageDispatchSpec<ImageCtxT>*> m_blocked_ios;
+  ceph::mutex m_ordering_lock;
 
   bool block_overlapping_io(
     ImageExtents* in_flight_image_extents, uint64_t object_off,
     uint64_t object_len);
 
   void unblock_overlapping_io(uint64_t off, uint64_t len, uint64_t tid);
-  uint64_t m_last_tid = 0;
+  std::atomic<unsigned> m_last_tid { 0 };
   std::set<uint64_t> m_queued_or_blocked_io_tids;
 
-  struct QueuedFlush {
-    QueuedFlush(AioCompletion *c, bool native_async) : c(c), native_async(native_async) {}
-
-    AioCompletion* c;
-    bool native_async;
-  };
-
-  std::map<uint64_t, QueuedFlush> m_queued_flushes;
+  std::map<uint64_t, ImageDispatchSpec<ImageCtxT>*> m_queued_flushes;
 
   void unblock_flushes(uint64_t tid);
 
@@ -172,6 +151,8 @@ private:
   void finish_in_flight_write();
 
   int start_in_flight_io(AioCompletion *c);
+  int handle_overlapping_io(uint64_t off, uint64_t len,
+     uint64_t tid, ImageDispatchSpec<ImageCtxT>* req);
   void finish_in_flight_io();
   void fail_in_flight_io(int r, ImageDispatchSpec<ImageCtxT> *req);
 
