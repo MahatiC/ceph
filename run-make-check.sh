@@ -33,7 +33,7 @@ function run() {
     $DRY_RUN sudo /sbin/sysctl -q -w fs.aio-max-nr=$((65536 * 16))
 
     CHECK_MAKEOPTS=${CHECK_MAKEOPTS:-$DEFAULT_MAKEOPTS}
-    if ! $DRY_RUN ctest $CHECK_MAKEOPTS --output-on-failure; then
+    if ! $DRY_RUN ctest $CHECK_MAKEOPTS --output-on-failure $CTEST_OPTS; then
         rm -fr ${TMPDIR:-/tmp}/ceph-asok.*
         return 1
     fi
