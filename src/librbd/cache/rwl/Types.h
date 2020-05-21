@@ -4,8 +4,13 @@
 #ifndef CEPH_LIBRBD_CACHE_RWL_TYPES_H
 #define CEPH_LIBRBD_CACHE_RWL_TYPES_H
 
+#include "acconfig.h"
+
+#ifdef WITH_RBD_RWL
+#include "libpmemobj.h"
+#endif
+
 #include <vector>
-#include <libpmemobj.h>
 #include "librbd/BlockGuard.h"
 #include "librbd/io/Types.h"
 
@@ -184,26 +189,33 @@ public:
 };
 
 /* Pmem structures */
+#ifdef WITH_RBD_RWL
 POBJ_LAYOUT_BEGIN(rbd_rwl);
 POBJ_LAYOUT_ROOT(rbd_rwl, struct WriteLogPoolRoot);
 POBJ_LAYOUT_TOID(rbd_rwl, uint8_t);
 POBJ_LAYOUT_TOID(rbd_rwl, struct WriteLogPmemEntry);
 POBJ_LAYOUT_END(rbd_rwl);
+#endif
 
 struct WriteLogPmemEntry {
   uint64_t sync_gen_number = 0;
   uint64_t write_sequence_number = 0;
   uint64_t image_offset_bytes;
   uint64_t write_bytes;
+  #ifdef WITH_RBD_RWL
   TOID(uint8_t) write_data;
+  #endif
+  #ifdef WITH_RBD_SSD
+  uint64_t write_data_pos; /* SSD data offset */
+  #endif
   struct {
-    uint8_t entry_valid :1; /* if 0, this entry is free */
-    uint8_t sync_point :1;  /* No data. No write sequence number. Marks sync
+    uint8_t entry_valid; /* if 0, this entry is free */
+    uint8_t sync_point;  /* No data. No write sequence number. Marks sync
                                point for this sync gen number */
-    uint8_t sequenced :1;   /* write sequence number is valid */
-    uint8_t has_data :1;    /* write_data field is valid (else ignore) */
-    uint8_t discard :1;     /* has_data will be 0 if this is a discard */
-    uint8_t writesame :1;   /* ws_datalen indicates length of data at write_bytes */
+    uint8_t sequenced;   /* write sequence number is valid */
+    uint8_t has_data;    /* write_data field is valid (else ignore) */
+    uint8_t discard;     /* has_data will be 0 if this is a discard */
+    uint8_t writesame;   /* ws_datalen indicates length of data at write_bytes */
   };
   uint32_t ws_datalen = 0;  /* Length of data buffer (writesame only) */
   uint32_t entry_index = 0; /* For debug consistency check. Can be removed if
@@ -234,11 +246,32 @@ struct WriteLogPmemEntry {
   }
   friend std::ostream& operator<<(std::ostream& os,
                                   const WriteLogPmemEntry &entry);
+  #ifdef WITH_RBD_SSD
+  DENC(WriteLogPmemEntry, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.sync_gen_number, p);
+    denc(v.write_sequence_number, p);
+    denc(v.image_offset_bytes, p);
+    denc(v.write_bytes, p);
+    denc(v.write_data_pos, p);
+    denc(v.entry_valid, p);
+    denc(v.sync_point, p);
+    denc(v.sequenced, p);
+    denc(v.has_data, p);
+    denc(v.discard, p);
+    denc(v.writesame, p);
+    denc(v.ws_datalen, p);
+    denc(v.entry_index, p);
+    DENC_FINISH(p);
+  }
+  #endif
 };
-
+#if defined(WITH_RBD_RWL) && !defined(WITH_RBD_SSD)
 static_assert(sizeof(WriteLogPmemEntry) == 64);
+#endif
 
 struct WriteLogPoolRoot {
+  #ifdef WITH_RBD_RWL
   union {
     struct {
       uint8_t layout_version;    /* Version of this structure (RWL_POOL_VERSION) */
@@ -246,6 +279,11 @@ struct WriteLogPoolRoot {
     uint64_t _u64;
   } header;
   TOID(struct WriteLogPmemEntry) log_entries;   /* contiguous array of log entries */
+  #endif
+  #ifdef WITH_RBD_SSD
+  uint64_t layout_version;
+  uint64_t cur_sync_gen;
+  #endif
   uint64_t pool_size;
   uint64_t flushed_sync_gen;     /* All writing entries with this or a lower
                                   * sync gen number are flushed. */
@@ -253,12 +291,56 @@ struct WriteLogPoolRoot {
   uint32_t num_log_entries;
   uint32_t first_free_entry;     /* Entry following the newest valid entry */
   uint32_t first_valid_entry;    /* Index of the oldest valid entry in the log */
+
+  #ifdef WITH_RBD_SSD
+  WriteLogPoolRoot()
+    : layout_version(0),
+      cur_sync_gen(0),
+      pool_size(0),
+      flushed_sync_gen(0),
+      block_size(0),
+      num_log_entries(0),
+      first_free_entry(0),
+      first_valid_entry(0) { }
+  DENC(WriteLogPoolRoot, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.layout_version, p);
+    denc(v.cur_sync_gen, p);
+    denc(v.pool_size, p);
+    denc(v.flushed_sync_gen, p);
+    denc(v.block_size, p);
+    denc(v.num_log_entries, p);
+    denc(v.first_free_entry, p);
+    denc(v.first_valid_entry, p);
+    DENC_FINISH(p);
+  }
+  #endif
 };
+
+#ifdef WITH_RBD_SSD
+struct super_block_t{
+public:
+  WriteLogPoolRoot root;
+  int checksum;      // SSD: checksum for validation
+
+  super_block_t()
+    : checksum(0) {}
+
+  DENC(super_block_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.root, p);
+    denc(v.checksum, p);
+    DENC_FINISH(p);
+  }
+};
+#endif
 
 struct WriteBufferAllocation {
   unsigned int allocation_size = 0;
+  #ifdef WITH_RBD_RWL
   pobj_action buffer_alloc_action;
   TOID(uint8_t) buffer_oid = OID_NULL;
+  #endif
   bool allocated = false;
   utime_t allocation_lat;
 };
@@ -304,5 +386,9 @@ public:
 } // namespace rwl
 } // namespace cache
 } // namespace librbd
-
+#ifdef WITH_RBD_SSD
+WRITE_CLASS_DENC(librbd::cache::rwl::WriteLogPmemEntry)
+WRITE_CLASS_DENC(librbd::cache::rwl::WriteLogPoolRoot)
+WRITE_CLASS_DENC(librbd::cache::rwl::super_block_t)
+#endif
 #endif // CEPH_LIBRBD_CACHE_RWL_TYPES_H
