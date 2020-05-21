@@ -73,6 +73,7 @@ std::ostream &operator<<(std::ostream &os,
   return entry.format(os);
 }
 
+#ifdef WITH_RBD_RWL
 void WriteLogEntry::init(bool has_data, std::vector<WriteBufferAllocation>::iterator allocation,
                          uint64_t current_sync_gen, uint64_t last_op_sequence_num, bool persist_on_flush) {
   ram_entry.has_data = 1;
@@ -91,6 +92,7 @@ void WriteLogEntry::init(bool has_data, std::vector<WriteBufferAllocation>::iter
   ram_entry.sync_point = 0;
   ram_entry.discard = 0;
 }
+#endif
 
 void WriteLogEntry::init_pmem_bp() {
   ceph_assert(!pmem_bp.have_raw());

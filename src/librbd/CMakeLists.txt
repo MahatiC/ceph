@@ -193,18 +193,27 @@ if(WITH_EVENTTRACE)
   list(APPEND librbd_internal_srcs ../common/EventTrace.cc)
 endif()
 
-if(WITH_RBD_RWL)
+if(WITH_RBD_RWL OR WITH_RBD_SSD)
   set(librbd_internal_srcs
     ${librbd_internal_srcs}
+    cache/rwl/Types.cc
     cache/rwl/ImageCacheState.cc
     cache/rwl/LogEntry.cc
     cache/rwl/LogMap.cc
     cache/rwl/LogOperation.cc
     cache/rwl/ReadRequest.cc
     cache/rwl/Request.cc
-    cache/rwl/SyncPoint.cc
-    cache/rwl/Types.cc
-    cache/ReplicatedWriteLog.cc)
+    cache/rwl/SyncPoint.cc)
+  if(WITH_RBD_RWL)
+    set(librbd_internal_srcs
+      ${librbd_internal_srcs}
+      cache/ReplicatedWriteLog.cc)
+  endif()
+  if(WITH_RBD_SSD)
+    set(librbd_internal_srcs
+      ${librbd_internal_srcs})
+      #TODO
+  endif()
 endif()
 
 add_library(rbd_api STATIC librbd.cc)

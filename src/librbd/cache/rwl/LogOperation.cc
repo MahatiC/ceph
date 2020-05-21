@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include "LogOperation.h"
-#include "librbd/cache/rwl/Types.h"
 
 #define dout_subsys ceph_subsys_rbd_rwl
 #undef dout_prefix
@@ -223,10 +222,12 @@ void WriteLogOperation::copy_bl_to_pmem_buffer() {
   i.copy((unsigned)log_entry->write_bytes(), (char*)log_entry->pmem_buffer);
 }
 
+#ifdef WITH_RBD_RWL
 void WriteLogOperation::flush_pmem_buf_to_cache(PMEMobjpool *log_pool) {
   buf_persist_time = ceph_clock_now();
   pmemobj_flush(log_pool, log_entry->pmem_buffer, log_entry->write_bytes());
 }
+#endif
 
 WriteLogOperationSet::WriteLogOperationSet(utime_t dispatched, PerfCounters *perfcounter, std::shared_ptr<SyncPoint> sync_point,
                                            bool persist_on_flush, CephContext *cct, Context *on_finish)
