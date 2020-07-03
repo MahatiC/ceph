@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
+/*
 #include <iostream>
 #include "common/hostname.h"
 #include "test/librbd/test_mock_fixture.h"
@@ -703,4 +704,4 @@ TEST_F(TestMockCacheReplicatedWriteLog, aio_compare_and_write_compare_failed) {
 }
 
 } // namespace cache
-} // namespace librbd
+} // namespace librbd*/
