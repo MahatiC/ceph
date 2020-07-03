@@ -203,11 +203,13 @@ if(WITH_RBD_RWL OR WITH_RBD_SSD)
     cache/rwl/LogOperation.cc
     cache/rwl/ReadRequest.cc
     cache/rwl/Request.cc
-    cache/rwl/SyncPoint.cc)
+    cache/rwl/SyncPoint.cc
+    cache/ParentWriteLog.cc
+    cache/WriteLogCache.cc)
   if(WITH_RBD_RWL)
     set(librbd_internal_srcs
-      ${librbd_internal_srcs}
-      cache/ReplicatedWriteLog.cc)
+      ${librbd_internal_srcs})
+      #TODO
   endif()
   if(WITH_RBD_SSD)
     set(librbd_internal_srcs

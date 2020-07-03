@@ -2,7 +2,7 @@
 // vim: ts=8 sw=2 smarttab
 
 #include <libpmemobj.h>
-#include "ReplicatedWriteLog.h"
+#include "ParentWriteLog.h"
 #include "include/buffer.h"
 #include "include/Context.h"
 #include "include/ceph_assert.h"
@@ -25,7 +25,7 @@
 #undef dout_subsys
 #define dout_subsys ceph_subsys_rbd_rwl
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::cache::ReplicatedWriteLog: " << this << " " \
+#define dout_prefix *_dout << "librbd::cache::ParentWriteLog: " << this << " " \
                            <<  __func__ << ": "
 
 namespace librbd {
@@ -33,34 +33,34 @@ namespace cache {
 
 using namespace librbd::cache::rwl;
 
-typedef ReplicatedWriteLog<ImageCtx>::Extent Extent;
-typedef ReplicatedWriteLog<ImageCtx>::Extents Extents;
+typedef ParentWriteLog<ImageCtx>::Extent Extent;
+typedef ParentWriteLog<ImageCtx>::Extents Extents;
 
 const unsigned long int OPS_APPENDED_TOGETHER = MAX_ALLOC_PER_TRANSACTION;
 
 template <typename I>
-ReplicatedWriteLog<I>::ReplicatedWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
+ParentWriteLog<I>::ParentWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
   : m_cache_state(cache_state),
     m_rwl_pool_layout_name(POBJ_LAYOUT_NAME(rbd_rwl)),
     m_image_ctx(image_ctx),
     m_log_pool_config_size(DEFAULT_POOL_SIZE),
     m_image_writeback(image_ctx), m_write_log_guard(image_ctx.cct),
     m_log_retire_lock(ceph::make_mutex(util::unique_lock_name(
-      "librbd::cache::ReplicatedWriteLog::m_log_retire_lock", this))),
-    m_entry_reader_lock("librbd::cache::ReplicatedWriteLog::m_entry_reader_lock"),
+      "librbd::cache::ParentWriteLog::m_log_retire_lock", this))),
+    m_entry_reader_lock("librbd::cache::ParentWriteLog::m_entry_reader_lock"),
     m_deferred_dispatch_lock(ceph::make_mutex(util::unique_lock_name(
-      "librbd::cache::ReplicatedWriteLog::m_deferred_dispatch_lock", this))),
+      "librbd::cache::ParentWriteLog::m_deferred_dispatch_lock", this))),
     m_log_append_lock(ceph::make_mutex(util::unique_lock_name(
-      "librbd::cache::ReplicatedWriteLog::m_log_append_lock", this))),
+      "librbd::cache::ParentWriteLog::m_log_append_lock", this))),
     m_lock(ceph::make_mutex(util::unique_lock_name(
-      "librbd::cache::ReplicatedWriteLog::m_lock", this))),
+      "librbd::cache::ParentWriteLog::m_lock", this))),
     m_blockguard_lock(ceph::make_mutex(util::unique_lock_name(
-      "librbd::cache::ReplicatedWriteLog::m_blockguard_lock", this))),
+      "librbd::cache::ParentWriteLog::m_blockguard_lock", this))),
     m_blocks_to_log_entries(image_ctx.cct),
-    m_thread_pool(image_ctx.cct, "librbd::cache::ReplicatedWriteLog::thread_pool", "tp_rwl",
+    m_thread_pool(image_ctx.cct, "librbd::cache::ParentWriteLog::thread_pool", "tp_rwl",
                   4,
                   ""),
-    m_work_queue("librbd::cache::ReplicatedWriteLog::work_queue",
+    m_work_queue("librbd::cache::ParentWriteLog::work_queue",
                  image_ctx.config.template get_val<uint64_t>("rbd_op_thread_timeout"),
                  &m_thread_pool)
 {
@@ -69,7 +69,7 @@ ReplicatedWriteLog<I>::ReplicatedWriteLog(I &image_ctx, librbd::cache::rwl::Imag
 }
 
 template <typename I>
-ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
+ParentWriteLog<I>::~ParentWriteLog() {
   ldout(m_image_ctx.cct, 15) << "enter" << dendl;
   {
     std::lock_guard timer_locker(*m_timer_lock);
@@ -89,7 +89,7 @@ ReplicatedWriteLog<I>::~ReplicatedWriteLog() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::perf_start(std::string name) {
+void ParentWriteLog<I>::perf_start(std::string name) {
   PerfCountersBuilder plb(m_image_ctx.cct, name, l_librbd_rwl_first, l_librbd_rwl_last);
 
   // Latency axis configuration for op histograms, values are in nanoseconds
@@ -273,14 +273,14 @@ void ReplicatedWriteLog<I>::perf_start(std::string name) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::perf_stop() {
+void ParentWriteLog<I>::perf_stop() {
   ceph_assert(m_perfcounter);
   m_image_ctx.cct->get_perfcounters_collection()->remove(m_perfcounter);
   delete m_perfcounter;
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::log_perf() {
+void ParentWriteLog<I>::log_perf() {
   bufferlist bl;
   Formatter *f = Formatter::create("json-pretty");
   bl.append("Perf dump follows\n--- Begin perf dump ---\n");
@@ -303,7 +303,7 @@ void ReplicatedWriteLog<I>::log_perf() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::periodic_stats() {
+void ParentWriteLog<I>::periodic_stats() {
   std::lock_guard locker(m_lock);
   ldout(m_image_ctx.cct, 1) << "STATS: "
                             << "m_free_log_entries=" << m_free_log_entries << ", "
@@ -319,7 +319,7 @@ void ReplicatedWriteLog<I>::periodic_stats() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::arm_periodic_stats() {
+void ParentWriteLog<I>::arm_periodic_stats() {
   ceph_assert(ceph_mutex_is_locked(*m_timer_lock));
   if (m_periodic_stats_enabled) {
     m_timer_ctx = new LambdaContext(
@@ -351,7 +351,7 @@ void ReplicatedWriteLog<I>::arm_periodic_stats() {
  *
  */
 template <typename I>
-void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
+void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
   struct WriteLogPmemEntry *pmem_log_entries = D_RW(D_RW(pool_root)->log_entries);
@@ -530,7 +530,7 @@ void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
+void ParentWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
   TOID(struct WriteLogPoolRoot) pool_root;
@@ -714,12 +714,12 @@ void ReplicatedWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::update_image_cache_state(Context *on_finish) {
+void ParentWriteLog<I>::update_image_cache_state(Context *on_finish) {
   m_cache_state->write_image_cache_state(on_finish);
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::init(Context *on_finish) {
+void ParentWriteLog<I>::init(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
   perf_start(m_image_ctx.id);
@@ -740,7 +740,7 @@ void ReplicatedWriteLog<I>::init(Context *on_finish) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
+void ParentWriteLog<I>::shut_down(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
 
@@ -833,7 +833,7 @@ void ReplicatedWriteLog<I>::shut_down(Context *on_finish) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::aio_read(Extents&& image_extents,
+void ParentWriteLog<I>::read(Extents&& image_extents,
                                      ceph::bufferlist* bl,
                                      int fadvise_flags, Context *on_finish) {
   // TODO: handle writesame and discard case in later PRs
@@ -958,7 +958,7 @@ void ReplicatedWriteLog<I>::aio_read(Extents&& image_extents,
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
+void ParentWriteLog<I>::write(Extents &&image_extents,
                                       bufferlist&& bl,
                                       int fadvise_flags,
                                       Context *on_finish) {
@@ -988,7 +988,7 @@ void ReplicatedWriteLog<I>::aio_write(Extents &&image_extents,
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
+void ParentWriteLog<I>::discard(uint64_t offset, uint64_t length,
                                         uint32_t discard_granularity_bytes,
                                         Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -1029,7 +1029,7 @@ void ReplicatedWriteLog<I>::aio_discard(uint64_t offset, uint64_t length,
  * in the block guard.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::aio_flush(io::FlushSource flush_source, Context *on_finish) {
+void ParentWriteLog<I>::flush(io::FlushSource flush_source, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "on_finish=" << on_finish << " flush_source=" << flush_source << dendl;
 
@@ -1088,7 +1088,7 @@ void ReplicatedWriteLog<I>::aio_flush(io::FlushSource flush_source, Context *on_
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
+void ParentWriteLog<I>::writesame(uint64_t offset, uint64_t length,
                                           bufferlist&& bl, int fadvise_flags,
                                           Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
@@ -1124,7 +1124,7 @@ void ReplicatedWriteLog<I>::aio_writesame(uint64_t offset, uint64_t length,
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
+void ParentWriteLog<I>::compare_and_write(Extents &&image_extents,
                                                   bufferlist&& cmp_bl,
                                                   bufferlist&& bl,
                                                   uint64_t *mismatch_offset,
@@ -1191,29 +1191,29 @@ void ReplicatedWriteLog<I>::aio_compare_and_write(Extents &&image_extents,
 
       /* Read phase of comp-and-write must read through RWL */
       Extents image_extents_copy = cw_req->image_extents;
-      aio_read(std::move(image_extents_copy), &cw_req->read_bl, cw_req->fadvise_flags, read_complete_ctx);
+      read(std::move(image_extents_copy), &cw_req->read_bl, cw_req->fadvise_flags, read_complete_ctx);
     });
 
   detain_guarded_request(cw_req, guarded_ctx, false);
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush(Context *on_finish) {
+void ParentWriteLog<I>::flush(Context *on_finish) {
   internal_flush(false, on_finish);
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::invalidate(Context *on_finish) {
+void ParentWriteLog<I>::invalidate(Context *on_finish) {
   internal_flush(true, on_finish);
 }
 
 template <typename I>
-CephContext *ReplicatedWriteLog<I>::get_context() {
+CephContext *ParentWriteLog<I>::get_context() {
   return m_image_ctx.cct;
 }
 
 template <typename I>
-BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequest &req)
+BlockGuardCell* ParentWriteLog<I>::detain_guarded_request_helper(GuardedRequest &req)
 {
   CephContext *cct = m_image_ctx.cct;
   BlockGuardCell *cell;
@@ -1234,7 +1234,7 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_helper(GuardedRequ
 }
 
 template <typename I>
-BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_barrier_helper(
+BlockGuardCell* ParentWriteLog<I>::detain_guarded_request_barrier_helper(
   GuardedRequest &req)
 {
   BlockGuardCell *cell = nullptr;
@@ -1262,7 +1262,7 @@ BlockGuardCell* ReplicatedWriteLog<I>::detain_guarded_request_barrier_helper(
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::detain_guarded_request(
+void ParentWriteLog<I>::detain_guarded_request(
   C_BlockIORequestT *request,
   GuardedRequestFunctionContext *guarded_ctx,
   bool is_barrier)
@@ -1288,7 +1288,7 @@ void ReplicatedWriteLog<I>::detain_guarded_request(
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cell)
+void ParentWriteLog<I>::release_guarded_request(BlockGuardCell *released_cell)
 {
   CephContext *cct = m_image_ctx.cct;
   WriteLogGuard::BlockOperations block_reqs;
@@ -1340,7 +1340,7 @@ void ReplicatedWriteLog<I>::release_guarded_request(BlockGuardCell *released_cel
  * events.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::append_scheduled_ops(void)
+void ParentWriteLog<I>::append_scheduled_ops(void)
 {
   GenericLogOperations ops;
   int append_result = 0;
@@ -1394,7 +1394,7 @@ void ReplicatedWriteLog<I>::append_scheduled_ops(void)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::enlist_op_appender()
+void ParentWriteLog<I>::enlist_op_appender()
 {
   m_async_append_ops++;
   m_async_op_tracker.start_op();
@@ -1412,7 +1412,7 @@ void ReplicatedWriteLog<I>::enlist_op_appender()
  * all prior log entries are persisted everywhere.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
+void ParentWriteLog<I>::schedule_append(GenericLogOperations &ops)
 {
   bool need_finisher;
   GenericLogOperationsVector appending;
@@ -1435,7 +1435,7 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperations &ops)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsVector &ops)
+void ParentWriteLog<I>::schedule_append(GenericLogOperationsVector &ops)
 {
   GenericLogOperations to_append(ops.begin(), ops.end());
 
@@ -1443,7 +1443,7 @@ void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationsVector &ops)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_append(GenericLogOperationSharedPtr op)
+void ParentWriteLog<I>::schedule_append(GenericLogOperationSharedPtr op)
 {
   GenericLogOperations to_append { op };
 
@@ -1456,7 +1456,7 @@ const unsigned long int ops_flushed_together = 4;
  * the log event append operation for all of them.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
+void ParentWriteLog<I>::flush_then_append_scheduled_ops(void)
 {
   GenericLogOperations ops;
   bool ops_remain = false;
@@ -1497,7 +1497,7 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::enlist_op_flusher()
+void ParentWriteLog<I>::enlist_op_flusher()
 {
   m_async_flush_ops++;
   m_async_op_tracker.start_op();
@@ -1514,7 +1514,7 @@ void ReplicatedWriteLog<I>::enlist_op_flusher()
  * then get their log entries appended.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector &ops)
+void ParentWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector &ops)
 {
   GenericLogOperations to_flush(ops.begin(), ops.end());
   bool need_finisher;
@@ -1538,7 +1538,7 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector
  */
 template <typename I>
 template <typename V>
-void ReplicatedWriteLog<I>::flush_pmem_buffer(V& ops)
+void ParentWriteLog<I>::flush_pmem_buffer(V& ops)
 {
   for (auto &operation : ops) {
     operation->flush_pmem_buf_to_cache(m_log_pool);
@@ -1564,7 +1564,7 @@ void ReplicatedWriteLog<I>::flush_pmem_buffer(V& ops)
  * Acquires lock
  */
 template <typename I>
-void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
+void ParentWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
 {
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
@@ -1593,7 +1593,7 @@ void ReplicatedWriteLog<I>::alloc_op_log_entries(GenericLogOperations &ops)
  * be contiguous in persistent memory.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperationsVector &ops)
+void ParentWriteLog<I>::flush_op_log_entries(GenericLogOperationsVector &ops)
 {
   if (ops.empty()) {
     return;
@@ -1620,7 +1620,7 @@ void ReplicatedWriteLog<I>::flush_op_log_entries(GenericLogOperationsVector &ops
  * of these must already have been persisted to its reserved area.
  */
 template <typename I>
-int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
+int ParentWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
 {
   CephContext *cct = m_image_ctx.cct;
   GenericLogOperationsVector entries_to_flush;
@@ -1710,7 +1710,7 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
  * Complete a set of write ops with the result of append_op_entries.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations &&ops,
+void ParentWriteLog<I>::complete_op_log_entries(GenericLogOperations &&ops,
                                                     const int result)
 {
   GenericLogEntries dirty_entries;
@@ -1755,7 +1755,7 @@ void ReplicatedWriteLog<I>::complete_op_log_entries(GenericLogOperations &&ops,
  * Dispatch as many deferred writes as possible
  */
 template <typename I>
-void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
+void ParentWriteLog<I>::dispatch_deferred_writes(void)
 {
   C_BlockIORequestT *front_req = nullptr;     /* req still on front of deferred list */
   C_BlockIORequestT *allocated_req = nullptr; /* req that was allocated, and is now off the list */
@@ -1842,7 +1842,7 @@ void ReplicatedWriteLog<I>::dispatch_deferred_writes(void)
  * deferred write
  */
 template <typename I>
-void ReplicatedWriteLog<I>::release_write_lanes(C_BlockIORequestT *req)
+void ParentWriteLog<I>::release_write_lanes(C_BlockIORequestT *req)
 {
   {
     std::lock_guard locker(m_lock);
@@ -1856,7 +1856,7 @@ void ReplicatedWriteLog<I>::release_write_lanes(C_BlockIORequestT *req)
  * resources are available, or queued if they aren't.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequestT *req)
+void ParentWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequestT *req)
 {
   bool dispatch_here = false;
 
@@ -1885,7 +1885,7 @@ void ReplicatedWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequestT *req)
 }
 
 template <typename I>
-bool ReplicatedWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
+bool ParentWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
   bool alloc_succeeds = true;
   bool no_space = false;
   uint64_t bytes_allocated = 0;
@@ -1999,7 +1999,7 @@ bool ReplicatedWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
 }
 
 template <typename I>
-C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Context *on_finish) {
+C_FlushRequest<ParentWriteLog<I>>* ParentWriteLog<I>::make_flush_req(Context *on_finish) {
   utime_t flush_begins = ceph_clock_now();
   bufferlist bl;
   auto *flush_req =
@@ -2010,7 +2010,7 @@ C_FlushRequest<ReplicatedWriteLog<I>>* ReplicatedWriteLog<I>::make_flush_req(Con
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::wake_up() {
+void ParentWriteLog<I>::wake_up() {
   CephContext *cct = m_image_ctx.cct;
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
 
@@ -2045,7 +2045,7 @@ void ReplicatedWriteLog<I>::wake_up() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::process_work() {
+void ParentWriteLog<I>::process_work() {
   CephContext *cct = m_image_ctx.cct;
   int max_iterations = 4;
   bool wake_up_requested = false;
@@ -2112,7 +2112,7 @@ void ReplicatedWriteLog<I>::process_work() {
 }
 
 template <typename I>
-bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log_entry) {
+bool ParentWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << "" << dendl;
@@ -2152,7 +2152,7 @@ bool ReplicatedWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log
 }
 
 template <typename I>
-Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
+Context* ParentWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
   bool invalidating = m_invalidating; // snapshot so we behave consistently
 
@@ -2217,7 +2217,7 @@ Context* ReplicatedWriteLog<I>::construct_flush_entry_ctx(std::shared_ptr<Generi
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
+void ParentWriteLog<I>::process_writeback_dirty_entries() {
   CephContext *cct = m_image_ctx.cct;
   bool all_clean = false;
   int flushed = 0;
@@ -2268,7 +2268,7 @@ void ReplicatedWriteLog<I>::process_writeback_dirty_entries() {
  * Update/persist the last flushed sync point in the log
  */
 template <typename I>
-void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen()
+void ParentWriteLog<I>::persist_last_flushed_sync_gen()
 {
   TOID(struct WriteLogPoolRoot) pool_root;
   pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
@@ -2298,7 +2298,7 @@ void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen()
 /* Returns true if the specified SyncPointLogEntry is considered flushed, and
  * the log will be updated to reflect this. */
 template <typename I>
-bool ReplicatedWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointLogEntry> log_entry)
+bool ParentWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointLogEntry> log_entry)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
   ceph_assert(log_entry);
@@ -2332,7 +2332,7 @@ bool ReplicatedWriteLog<I>::handle_flushed_sync_point(std::shared_ptr<SyncPointL
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointLogEntry> log_entry)
+void ParentWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointLogEntry> log_entry)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
   ceph_assert(log_entry);
@@ -2349,7 +2349,7 @@ void ReplicatedWriteLog<I>::sync_point_writer_flushed(std::shared_ptr<SyncPointL
 /* Make a new sync point and flush the previous during initialization, when there may or may
  * not be a previous sync point */
 template <typename I>
-void ReplicatedWriteLog<I>::init_flush_new_sync_point(DeferredContexts &later) {
+void ParentWriteLog<I>::init_flush_new_sync_point(DeferredContexts &later) {
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
   ceph_assert(!m_initialized); /* Don't use this after init */
 
@@ -2365,7 +2365,7 @@ void ReplicatedWriteLog<I>::init_flush_new_sync_point(DeferredContexts &later) {
  * Begin a new sync point
  */
 template <typename I>
-void ReplicatedWriteLog<I>::new_sync_point(DeferredContexts &later) {
+void ParentWriteLog<I>::new_sync_point(DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   std::shared_ptr<SyncPoint> old_sync_point = m_current_sync_point;
   std::shared_ptr<SyncPoint> new_sync_point;
@@ -2410,7 +2410,7 @@ void ReplicatedWriteLog<I>::new_sync_point(DeferredContexts &later) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req,
+void ParentWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req,
                                                  DeferredContexts &later) {
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
 
@@ -2459,7 +2459,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point(C_FlushRequestT *flush_req,
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flush_req,
+void ParentWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flush_req,
                                                            DeferredContexts &later) {
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
 
@@ -2492,7 +2492,7 @@ void ReplicatedWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flus
  * flushed.
  */
 template <typename I>
-void ReplicatedWriteLog<I>::flush_dirty_entries(Context *on_finish) {
+void ParentWriteLog<I>::flush_dirty_entries(Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   bool all_clean;
   bool flushing;
@@ -2530,7 +2530,7 @@ void ReplicatedWriteLog<I>::flush_dirty_entries(Context *on_finish) {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::internal_flush(bool invalidate, Context *on_finish) {
+void ParentWriteLog<I>::internal_flush(bool invalidate, Context *on_finish) {
   ldout(m_image_ctx.cct, 20) << "invalidate=" << invalidate << dendl;
 
   if (m_perfcounter) {
@@ -2627,12 +2627,12 @@ void ReplicatedWriteLog<I>::internal_flush(bool invalidate, Context *on_finish) 
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::add_into_log_map(GenericWriteLogEntries &log_entries) {
+void ParentWriteLog<I>::add_into_log_map(GenericWriteLogEntries &log_entries) {
   m_blocks_to_log_entries.add_log_entries(log_entries);
 }
 
 template <typename I>
-bool ReplicatedWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> log_entry) {
+bool ParentWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> log_entry) {
   CephContext *cct = m_image_ctx.cct;
 
   ldout(cct, 20) << dendl;
@@ -2646,7 +2646,7 @@ bool ReplicatedWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> lo
  * retired.
  */
 template <typename I>
-bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
+bool ParentWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
   CephContext *cct = m_image_ctx.cct;
   GenericLogEntriesVector retiring_entries;
   uint32_t initial_first_valid_entry;
@@ -2761,7 +2761,7 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
 } // namespace cache
 } // namespace librbd
 
-template class librbd::cache::ReplicatedWriteLog<librbd::ImageCtx>;
+template class librbd::cache::ParentWriteLog<librbd::ImageCtx>;
 template class librbd::cache::ImageCache<librbd::ImageCtx>;
 template void librbd::cache::ReplicatedWriteLog<librbd::ImageCtx>:: \
   flush_pmem_buffer(std::vector<std::shared_ptr< \

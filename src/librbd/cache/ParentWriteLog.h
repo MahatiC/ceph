@@ -1,8 +1,8 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
-#ifndef CEPH_LIBRBD_CACHE_REPLICATED_WRITE_LOG
-#define CEPH_LIBRBD_CACHE_REPLICATED_WRITE_LOG
+#ifndef CEPH_LIBRBD_CACHE_PARENT_WRITE_LOG
+#define CEPH_LIBRBD_CACHE_PARENT_WRITE_LOG
 
 #include "common/RWLock.h"
 #include "common/WorkQueue.h"
@@ -61,40 +61,40 @@ using GenericLogOperations = std::list<GenericLogOperationSharedPtr>;
 
 
 template <typename ImageCtxT>
-class ReplicatedWriteLog : public ImageCache<ImageCtxT> {
+class ParentWriteLog {
 public:
-  using typename ImageCache<ImageCtxT>::Extent;
-  using typename ImageCache<ImageCtxT>::Extents;
+  typedef io::Extent Extent;
+  typedef io::Extents Extents; 
 
-  ReplicatedWriteLog(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state);
-  ~ReplicatedWriteLog();
-  ReplicatedWriteLog(const ReplicatedWriteLog&) = delete;
-  ReplicatedWriteLog &operator=(const ReplicatedWriteLog&) = delete;
+  ParentWriteLog(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state);
+  ~ParentWriteLog();
+  ParentWriteLog(const ParentWriteLog&) = delete;
+  ParentWriteLog &operator=(const ParentWriteLog&) = delete;
 
-  /// client AIO methods
-  void aio_read(Extents&& image_extents, ceph::bufferlist *bl,
-                int fadvise_flags, Context *on_finish) override;
-  void aio_write(Extents&& image_extents, ceph::bufferlist&& bl,
-                 int fadvise_flags, Context *on_finish) override;
-  void aio_discard(uint64_t offset, uint64_t length,
+  /// IO methods
+  void read(Extents&& image_extents, ceph::bufferlist *bl,
+                int fadvise_flags, Context *on_finish);
+  void write(Extents&& image_extents, ceph::bufferlist&& bl,
+                 int fadvise_flags, Context *on_finish);
+  void discard(uint64_t offset, uint64_t length,
                    uint32_t discard_granularity_bytes,
-                   Context *on_finish) override;
-  void aio_flush(io::FlushSource flush_source, Context *on_finish) override;
-  void aio_writesame(uint64_t offset, uint64_t length,
+                   Context *on_finish); 
+  void flush(io::FlushSource flush_source, Context *on_finish);
+  void writesame(uint64_t offset, uint64_t length,
                      ceph::bufferlist&& bl,
-                     int fadvise_flags, Context *on_finish) override;
-  void aio_compare_and_write(Extents&& image_extents,
+                     int fadvise_flags, Context *on_finish);
+  void compare_and_write(Extents&& image_extents,
                              ceph::bufferlist&& cmp_bl, ceph::bufferlist&& bl,
                              uint64_t *mismatch_offset,int fadvise_flags,
-                             Context *on_finish) override;
+                             Context *on_finish);
 
   /// internal state methods
-  void init(Context *on_finish) override;
-  void shut_down(Context *on_finish) override;
-  void invalidate(Context *on_finish) override;
-  void flush(Context *on_finish) override;
+  void init(Context *on_finish);
+  void shut_down(Context *on_finish);
+  void invalidate(Context *on_finish);
+  void flush(Context *on_finish);
 
-  using This = ReplicatedWriteLog<ImageCtxT>;
+  using This = ParentWriteLog<ImageCtxT>;
   using C_WriteRequestT = rwl::C_WriteRequest<This>;
   using C_BlockIORequestT = rwl::C_BlockIORequest<This>;
   using C_FlushRequestT = rwl::C_FlushRequest<This>;
@@ -135,7 +135,7 @@ public:
     return m_free_log_entries;
   }
   void add_into_log_map(rwl::GenericWriteLogEntries &log_entries);
-private:
+protected:
   typedef std::list<rwl::C_WriteRequest<This> *> C_WriteRequests;
   typedef std::list<rwl::C_BlockIORequest<This> *> C_BlockIORequests;
 
@@ -288,7 +288,7 @@ private:
 
   void init_flush_new_sync_point(rwl::DeferredContexts &later);
   void new_sync_point(rwl::DeferredContexts &later);
-  rwl::C_FlushRequest<ReplicatedWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
+  rwl::C_FlushRequest<ParentWriteLog<ImageCtxT>>* make_flush_req(Context *on_finish);
   void flush_new_sync_point_if_needed(C_FlushRequestT *flush_req, rwl::DeferredContexts &later);
 
   void dispatch_deferred_writes(void);
@@ -309,6 +309,6 @@ private:
 } // namespace cache
 } // namespace librbd
 
-extern template class librbd::cache::ReplicatedWriteLog<librbd::ImageCtx>;
+extern template class librbd::cache::ParentWriteLog<librbd::ImageCtx>;
 
-#endif // CEPH_LIBRBD_CACHE_REPLICATED_WRITE_LOG
+#endif // CEPH_LIBRBD_CACHE_PARENT_WRITE_LOG
