@@ -13,6 +13,8 @@
 #include "common/Timer.h"
 #include "common/perf_counters.h"
 #include "librbd/ImageCtx.h"
+#include "ReplicatedWriteLog.h"
+#include "SSDWriteLog.h"
 #include "librbd/cache/rwl/ImageCacheState.h"
 #include "librbd/cache/rwl/LogEntry.h"
 #include <map>
@@ -36,11 +38,9 @@ template <typename I>
 WriteLogCache<I>::WriteLogCache(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state,
                                bool isRWL) {
   if (isRWL) {
-    //TODO Uncomment in later commit
-    //m_write_log = new ReplicatedWriteLog<I>(image_ctx, cache_state);
+    m_write_log = new ReplicatedWriteLog<I>(image_ctx, cache_state);
   } else {
-    //TODO Uncomment in later commit
-    //m_write_log = new SSDWriteLog<I>(image_ctx, cache_state);
+    m_write_log = new SSDWriteLog<I>(image_ctx, cache_state);
   }
 }
 
