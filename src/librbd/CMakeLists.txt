@@ -203,13 +203,13 @@ if(WITH_RBD_RWL OR WITH_RBD_SSD)
     cache/WriteLogCache.cc)
   if(WITH_RBD_RWL)
     set(librbd_internal_srcs
-      ${librbd_internal_srcs})
-      #TODO
+      ${librbd_internal_srcs}
+      cache/ReplicatedWriteLog.cc)
   endif()
   if(WITH_RBD_SSD)
     set(librbd_internal_srcs
-      ${librbd_internal_srcs})
-      #TODO
+      ${librbd_internal_srcs}
+      cache/SSDWriteLog.cc)
   endif()
 endif()
 
