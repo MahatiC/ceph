@@ -48,6 +48,26 @@ private:
   using C_WriteSameRequestT = rwl::C_WriteSameRequest<This>;
   using C_CompAndWriteRequestT = rwl::C_CompAndWriteRequest<This>;
 
+  using ParentWriteLog<ImageCtxT>::m_lock;
+  using ParentWriteLog<ImageCtxT>::m_log_pool;
+  using ParentWriteLog<ImageCtxT>::m_log_entries;
+  using ParentWriteLog<ImageCtxT>::m_image_ctx;
+  using ParentWriteLog<ImageCtxT>::m_perfcounter;
+  using ParentWriteLog<ImageCtxT>::m_ops_to_flush;
+
+  void alloc_op_log_entries(rwl::GenericLogOperations &ops) override;
+  int append_op_log_entries(rwl::GenericLogOperations &ops) override;
+  bool retire_entries(const unsigned long int frees_per_tx) override;
+  void persist_last_flushed_sync_gen() override;
+  void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) override;
+  Context *construct_flush_entry_ctx(
+       const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
+
+  void flush_then_append_scheduled_ops(void);
+  void enlist_op_flusher();
+  void flush_op_log_entries(rwl::GenericLogOperationsVector &ops);
+  template <typename V>
+  void flush_pmem_buffer(V& ops);
 };
 
 } // namespace cache

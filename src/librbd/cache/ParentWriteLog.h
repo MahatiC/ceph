@@ -67,7 +67,7 @@ public:
   typedef io::Extents Extents; 
 
   ParentWriteLog(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state);
-  ~ParentWriteLog();
+  virtual ~ParentWriteLog();
   ParentWriteLog(const ParentWriteLog&) = delete;
   ParentWriteLog &operator=(const ParentWriteLog&) = delete;
 
@@ -106,11 +106,8 @@ public:
   void release_guarded_request(BlockGuardCell *cell);
   void release_write_lanes(C_BlockIORequestT *req);
   bool alloc_resources(C_BlockIORequestT *req);
-  template <typename V>
-  void flush_pmem_buffer(V& ops);
   void schedule_append(rwl::GenericLogOperationsVector &ops);
   void schedule_append(rwl::GenericLogOperationSharedPtr op);
-  void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops);
   void flush_new_sync_point(C_FlushRequestT *flush_req, rwl::DeferredContexts &later);
   std::shared_ptr<rwl::SyncPoint> get_current_sync_point() {
     return m_current_sync_point;
@@ -278,13 +275,11 @@ protected:
 
   void flush_dirty_entries(Context *on_finish);
   bool can_flush_entry(const std::shared_ptr<rwl::GenericLogEntry> log_entry);
-  Context *construct_flush_entry_ctx(const std::shared_ptr<rwl::GenericLogEntry> log_entry);
-  void persist_last_flushed_sync_gen();
+  Context *construct_flush_entry(const std::shared_ptr<rwl::GenericLogEntry> log_entry, bool invalidating);
   bool handle_flushed_sync_point(std::shared_ptr<rwl::SyncPointLogEntry> log_entry);
   void sync_point_writer_flushed(std::shared_ptr<rwl::SyncPointLogEntry> log_entry);
   void process_writeback_dirty_entries();
   bool can_retire_entry(const std::shared_ptr<rwl::GenericLogEntry> log_entry);
-  bool retire_entries(const unsigned long int frees_per_tx);
 
   void init_flush_new_sync_point(rwl::DeferredContexts &later);
   void new_sync_point(rwl::DeferredContexts &later);
@@ -296,14 +291,16 @@ protected:
   void append_scheduled_ops(void);
   void enlist_op_appender();
   void schedule_append(rwl::GenericLogOperations &ops);
-  void flush_then_append_scheduled_ops(void);
-  void enlist_op_flusher();
-  void alloc_op_log_entries(rwl::GenericLogOperations &ops);
-  void flush_op_log_entries(rwl::GenericLogOperationsVector &ops);
-  int append_op_log_entries(rwl::GenericLogOperations &ops);
   void complete_op_log_entries(rwl::GenericLogOperations &&ops, const int r);
   void schedule_complete_op_log_entries(rwl::GenericLogOperations &&ops, const int r);
   void internal_flush(bool invalidate, Context *on_finish);
+
+  virtual bool retire_entries(const unsigned long int frees_per_tx) {return false;};
+  virtual void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) {}
+  virtual void persist_last_flushed_sync_gen() {}
+  virtual void alloc_op_log_entries(rwl::GenericLogOperations &ops) {}
+  virtual int append_op_log_entries(rwl::GenericLogOperations &ops) {return -1;}
+  virtual Context *construct_flush_entry_ctx(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {return nullptr;}
 };
 
 } // namespace cache
