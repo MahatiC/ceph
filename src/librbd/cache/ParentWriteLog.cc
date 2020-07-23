@@ -36,11 +36,11 @@ using namespace librbd::cache::rwl;
 typedef ParentWriteLog<ImageCtx>::Extent Extent;
 typedef ParentWriteLog<ImageCtx>::Extents Extents;
 
-const unsigned long int OPS_APPENDED_TOGETHER = MAX_ALLOC_PER_TRANSACTION;
-
 template <typename I>
-ParentWriteLog<I>::ParentWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
+ParentWriteLog<I>::ParentWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state,
+                                  bool ssd_writelog)
   : m_cache_state(cache_state),
+    m_ssd_writelog(ssd_writelog),
     m_rwl_pool_layout_name(POBJ_LAYOUT_NAME(rbd_rwl)),
     m_image_ctx(image_ctx),
     m_log_pool_config_size(DEFAULT_POOL_SIZE),
@@ -61,7 +61,7 @@ ParentWriteLog<I>::ParentWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheSt
                   4,
                   ""),
     m_work_queue("librbd::cache::ParentWriteLog::work_queue",
-                 image_ctx.config.template get_val<uint64_t>("rbd_op_thread_timeout"),
+                 ceph::make_timespan(image_ctx.config.template get_val<uint64_t>("rbd_op_thread_timeout")),
                  &m_thread_pool)
 {
   CephContext *cct = m_image_ctx.cct;
@@ -973,7 +973,7 @@ void ParentWriteLog<I>::write(Extents &&image_extents,
 
   auto *write_req =
     new C_WriteRequestT(*this, now, std::move(image_extents), std::move(bl), fadvise_flags,
-                        m_lock, m_perfcounter, on_finish);
+                        m_lock, m_perfcounter, on_finish, m_ssd_writelog);
   m_perfcounter->inc(l_librbd_rwl_wr_bytes, write_req->image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -1004,7 +1004,7 @@ void ParentWriteLog<I>::discard(uint64_t offset, uint64_t length,
 
   auto *discard_req =
     new C_DiscardRequestT(*this, now, std::move(discard_extents), discard_granularity_bytes,
-                          m_lock, m_perfcounter, on_finish);
+                          m_lock, m_perfcounter, on_finish, m_ssd_writelog);
 
   /* The lambda below will be called when the block guard for all
    * blocks affected by this write is obtained */
@@ -1029,7 +1029,7 @@ void ParentWriteLog<I>::discard(uint64_t offset, uint64_t length,
  * in the block guard.
  */
 template <typename I>
-void ParentWriteLog<I>::flush(io::FlushSource flush_source, Context *on_finish) {
+void ParentWriteLog<I>::flush_aio(io::FlushSource flush_source, Context *on_finish) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << "on_finish=" << on_finish << " flush_source=" << flush_source << dendl;
 
@@ -1109,7 +1109,7 @@ void ParentWriteLog<I>::writesame(uint64_t offset, uint64_t length,
    * write sames are different than normal writes. */
   auto *ws_req =
     new C_WriteSameRequestT(*this, now, std::move(ws_extents), std::move(bl),
-                            fadvise_flags, m_lock, m_perfcounter, on_finish);
+                            fadvise_flags, m_lock, m_perfcounter, on_finish, m_ssd_writelog);
   m_perfcounter->inc(l_librbd_rwl_ws_bytes, ws_req->image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -1141,7 +1141,7 @@ void ParentWriteLog<I>::compare_and_write(Extents &&image_extents,
    * succeeds. */
   auto *cw_req =
     new C_CompAndWriteRequestT(*this, now, std::move(image_extents), std::move(cmp_bl), std::move(bl),
-                               mismatch_offset, fadvise_flags, m_lock, m_perfcounter, on_finish);
+                               mismatch_offset, fadvise_flags, m_lock, m_perfcounter, on_finish, m_ssd_writelog);
   m_perfcounter->inc(l_librbd_rwl_cmp_bytes, cw_req->image_extents_summary.total_bytes);
 
   /* The lambda below will be called when the block guard for all
@@ -1335,62 +1335,39 @@ void ParentWriteLog<I>::release_guarded_request(BlockGuardCell *released_cell)
   ldout(cct, 20) << "exit" << dendl;
 }
 
-/*
- * Performs the log event append operation for all of the scheduled
- * events.
- */
 template <typename I>
-void ParentWriteLog<I>::append_scheduled_ops(void)
+void ParentWriteLog<I>::append_scheduled(GenericLogOperations &ops, bool &ops_remain,
+                                         bool &appending, bool isRWL)
 {
-  GenericLogOperations ops;
-  int append_result = 0;
-  bool ops_remain = false;
-  bool appending = false; /* true if we set m_appending */
-  ldout(m_image_ctx.cct, 20) << dendl;
-  do {
-    ops.clear();
-
-    {
-      std::lock_guard locker(m_lock);
-      if (!appending && m_appending) {
-        /* Another thread is appending */
-        ldout(m_image_ctx.cct, 15) << "Another thread is appending" << dendl;
-        return;
+  const unsigned long int OPS_APPENDED = isRWL ? MAX_ALLOC_PER_TRANSACTION : MAX_WRITES_PER_SYNC_POINT;
+  {
+    std::lock_guard locker(m_lock);
+    if (!appending && m_appending) {
+      /* Another thread is appending */
+      ldout(m_image_ctx.cct, 15) << "Another thread is appending" << dendl;
+      return;
+    }
+    if (m_ops_to_append.size()) {
+      appending = true;
+      m_appending = true;
+      auto last_in_batch = m_ops_to_append.begin();
+      unsigned int ops_to_append = m_ops_to_append.size();
+      if (ops_to_append > OPS_APPENDED) {
+        ops_to_append = OPS_APPENDED;
       }
-      if (m_ops_to_append.size()) {
-        appending = true;
-        m_appending = true;
-        auto last_in_batch = m_ops_to_append.begin();
-        unsigned int ops_to_append = m_ops_to_append.size();
-        if (ops_to_append > OPS_APPENDED_TOGETHER) {
-          ops_to_append = OPS_APPENDED_TOGETHER;
-        }
-        std::advance(last_in_batch, ops_to_append);
-        ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
-        ops_remain = true; /* Always check again before leaving */
-        ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", "
-                                   << m_ops_to_append.size() << " remain" << dendl;
-      } else {
-        ops_remain = false;
-        if (appending) {
-          appending = false;
-          m_appending = false;
-        }
+      std::advance(last_in_batch, ops_to_append);
+      ops.splice(ops.end(), m_ops_to_append, m_ops_to_append.begin(), last_in_batch);
+      ops_remain = true; /* Always check again before leaving */
+      ldout(m_image_ctx.cct, 20) << "appending " << ops.size() << ", "
+                                 << m_ops_to_append.size() << " remain" << dendl;
+    } else if (isRWL) {
+      ops_remain = false;
+      if (appending) {
+        appending = false;
+        m_appending = false;
       }
     }
-
-    if (ops.size()) {
-      std::lock_guard locker(m_log_append_lock);
-      alloc_op_log_entries(ops);
-      append_result = append_op_log_entries(ops);
-    }
-
-    int num_ops = ops.size();
-    if (num_ops) {
-      /* New entries may be flushable. Completion will wake up flusher. */
-      complete_op_log_entries(std::move(ops), append_result);
-    }
-  } while (ops_remain);
+  }
 }
 
 template <typename I>
@@ -1406,40 +1383,12 @@ void ParentWriteLog<I>::enlist_op_appender()
   m_work_queue.queue(append_ctx);
 }
 
-/*
- * Takes custody of ops. They'll all get their log entries appended,
- * and have their on_write_persist contexts completed once they and
- * all prior log entries are persisted everywhere.
- */
-template <typename I>
-void ParentWriteLog<I>::schedule_append(GenericLogOperations &ops)
-{
-  bool need_finisher;
-  GenericLogOperationsVector appending;
-
-  std::copy(std::begin(ops), std::end(ops), std::back_inserter(appending));
-  {
-    std::lock_guard locker(m_lock);
-
-    need_finisher = m_ops_to_append.empty() && !m_appending;
-    m_ops_to_append.splice(m_ops_to_append.end(), ops);
-  }
-
-  if (need_finisher) {
-    enlist_op_appender();
-  }
-
-  for (auto &op : appending) {
-    op->appending();
-  }
-}
-
 template <typename I>
 void ParentWriteLog<I>::schedule_append(GenericLogOperationsVector &ops)
 {
   GenericLogOperations to_append(ops.begin(), ops.end());
 
-  schedule_append(to_append);
+  schedule_append_ops(to_append);
 }
 
 template <typename I>
@@ -1447,7 +1396,7 @@ void ParentWriteLog<I>::schedule_append(GenericLogOperationSharedPtr op)
 {
   GenericLogOperations to_append { op };
 
-  schedule_append(to_append);
+  schedule_append_ops(to_append);
 }
 
 /*
@@ -1467,6 +1416,9 @@ void ParentWriteLog<I>::complete_op_log_entries(GenericLogOperations &&ops,
     if (op->is_writing_op()) {
       op->mark_log_entry_completed();
       dirty_entries.push_back(log_entry);
+    }
+    if (log_entry->is_write_entry()) {
+      release_ram(log_entry);
     }
     if (op->reserved_allocated()) {
       published_reserves++;
@@ -1629,20 +1581,12 @@ void ParentWriteLog<I>::alloc_and_dispatch_io_req(C_BlockIORequestT *req)
 }
 
 template <typename I>
-bool ParentWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
+bool ParentWriteLog<I>::check_allocation(C_BlockIORequestT *req,
+      uint64_t &bytes_cached, uint64_t &bytes_dirtied, uint64_t &bytes_allocated,
+      uint64_t &num_lanes, uint64_t &num_log_entries,
+      uint64_t &num_unpublished_reserves, uint64_t bytes_allocated_cap){
   bool alloc_succeeds = true;
   bool no_space = false;
-  uint64_t bytes_allocated = 0;
-  uint64_t bytes_cached = 0;
-  uint64_t bytes_dirtied = 0;
-  uint64_t num_lanes = 0;
-  uint64_t num_unpublished_reserves = 0;
-  uint64_t num_log_entries = 0;
-
-  // Setup buffer, and get all the number of required resources
-  req->setup_buffer_resources(bytes_cached, bytes_dirtied, bytes_allocated,
-                              num_lanes, num_log_entries, num_unpublished_reserves);
-
   {
     std::lock_guard locker(m_lock);
     if (m_free_lanes < num_lanes) {
@@ -1664,11 +1608,11 @@ bool ParentWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
       no_space = true; /* Entries must be retired */
     }
     /* Don't attempt buffer allocate if we've exceeded the "full" threshold */
-    if (m_bytes_allocated + bytes_allocated > m_bytes_allocated_cap) {
+    if (m_bytes_allocated + bytes_allocated > bytes_allocated_cap) {
       if (!req->has_io_waited_for_buffers()) {
         req->set_io_waited_for_entries(true);
         ldout(m_image_ctx.cct, 1) << "Waiting for allocation cap (cap="
-                                  << m_bytes_allocated_cap
+                                  << bytes_allocated_cap
                                   << ", allocated=" << m_bytes_allocated
                                   << ") in write [" << *req << "]" << dendl;
       }
@@ -1677,36 +1621,12 @@ bool ParentWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
     }
   }
 
-  std::vector<WriteBufferAllocation>& buffers = req->get_resources_buffers();
   if (alloc_succeeds) {
-    for (auto &buffer : buffers) {
-      utime_t before_reserve = ceph_clock_now();
-      buffer.buffer_oid = pmemobj_reserve(m_log_pool,
-                                          &buffer.buffer_alloc_action,
-                                          buffer.allocation_size,
-                                          0 /* Object type */);
-      buffer.allocation_lat = ceph_clock_now() - before_reserve;
-      if (TOID_IS_NULL(buffer.buffer_oid)) {
-        if (!req->has_io_waited_for_buffers()) {
-          req->set_io_waited_for_entries(true);
-        }
-        ldout(m_image_ctx.cct, 5) << "can't allocate all data buffers: "
-                                  << pmemobj_errormsg() << ". "
-                                  << *req << dendl;
-        alloc_succeeds = false;
-        no_space = true; /* Entries need to be retired */
-        break;
-      } else {
-        buffer.allocated = true;
-      }
-      ldout(m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo
-                                 << "." << buffer.buffer_oid.oid.off
-                                 << ", size=" << buffer.allocation_size << dendl;
-    }
+    reserve_pmem(req, alloc_succeeds, no_space);
   }
 
   if (alloc_succeeds) {
-    std::lock_guard locker(m_lock);
+     std::lock_guard locker(m_lock);
     /* We need one free log entry per extent (each is a separate entry), and
      * one free "lane" for remote replication. */
     if ((m_free_lanes >= num_lanes) &&
@@ -1722,22 +1642,12 @@ bool ParentWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
     }
   }
 
-  if (!alloc_succeeds) {
-    /* On alloc failure, free any buffers we did allocate */
-    for (auto &buffer : buffers) {
-      if (buffer.allocated) {
-        pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
-      }
-    }
-    if (no_space) {
-      /* Expedite flushing and/or retiring */
-      std::lock_guard locker(m_lock);
-      m_alloc_failed_since_retire = true;
-      m_last_alloc_fail = ceph_clock_now();
-    }
+  if (!alloc_succeeds && no_space) {
+    /* Expedite flushing and/or retiring */
+    std::lock_guard locker(m_lock);
+    m_alloc_failed_since_retire = true;
+    m_last_alloc_fail = ceph_clock_now();
   }
-
-  req->set_allocated(alloc_succeeds);
 
   return alloc_succeeds;
 }
@@ -1748,7 +1658,7 @@ C_FlushRequest<ParentWriteLog<I>>* ParentWriteLog<I>::make_flush_req(Context *on
   bufferlist bl;
   auto *flush_req =
     new C_FlushRequestT(*this, flush_begins, Extents({whole_volume_extent()}),
-                        std::move(bl), 0, m_lock, m_perfcounter, on_finish);
+                        std::move(bl), 0, m_lock, m_perfcounter, on_finish, m_ssd_writelog);
 
   return flush_req;
 }
@@ -2182,6 +2092,11 @@ void ParentWriteLog<I>::flush_new_sync_point_if_needed(C_FlushRequestT *flush_re
   }
 }
 
+template <typename I>
+void ParentWriteLog<I>::queue_ctx(Context *user_req, int r) {
+  m_image_ctx.op_work_queue->queue(user_req, r);
+}
+
 /*
  * RWL internal flush - will actually flush the RWL.
  *
@@ -2328,7 +2243,9 @@ void ParentWriteLog<I>::internal_flush(bool invalidate, Context *on_finish) {
 }
 
 template <typename I>
-void ParentWriteLog<I>::add_into_log_map(GenericWriteLogEntries &log_entries) {
+void ParentWriteLog<I>::add_into_log_map(GenericWriteLogEntries &log_entries,
+                                         C_BlockIORequestT *req) {
+  copy_pmem(req);
   m_blocks_to_log_entries.add_log_entries(log_entries);
 }
 
@@ -2345,7 +2262,3 @@ bool ParentWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> log_en
 } // namespace librbd
 
 template class librbd::cache::ParentWriteLog<librbd::ImageCtx>;
-template class librbd::cache::ImageCache<librbd::ImageCtx>;
-template void librbd::cache::ReplicatedWriteLog<librbd::ImageCtx>:: \
-  flush_pmem_buffer(std::vector<std::shared_ptr< \
-    librbd::cache::rwl::GenericLogOperation>>&);

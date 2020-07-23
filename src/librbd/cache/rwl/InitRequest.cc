@@ -7,10 +7,10 @@
 #include "common/errno.h"
 #include "librbd/asio/ContextWQ.h"
 
-#if defined(WITH_RBD_RWL)
+#if defined(WITH_RBD_RWL) || defined(WITH_RBD_SSD)
 #include "librbd/cache/rwl/ImageCacheState.h"
-#include "librbd/cache/ReplicatedWriteLog.h"
-#endif // WITH_RBD_RWL
+#include "librbd/cache/WriteLogCache.h"
+#endif // WITH_RBD_RWL OR WITH_RBD_SSD
 
 #include "librbd/cache/Utils.h"
 #include "librbd/ImageCtx.h"
@@ -76,7 +76,7 @@ void InitRequest<I>::get_image_cache_state() {
   switch(cache_type) {
     case cache::IMAGE_CACHE_TYPE_RWL:
       m_image_ctx.image_cache =
-        new librbd::cache::ReplicatedWriteLog<I>(m_image_ctx,
+        new librbd::cache::WriteLogCache<I>(m_image_ctx,
                                                  cache_state);
       break;
     default:

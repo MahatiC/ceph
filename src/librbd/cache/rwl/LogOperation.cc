@@ -214,11 +214,12 @@ void WriteLogOperation::complete(int result) {
   m_perfcounter->tinc(l_librbd_rwl_log_op_buf_to_app_t, log_append_time - buf_persist_time);
 }
 
-void WriteLogOperation::copy_bl_to_pmem_buffer() {
+void WriteLogOperation::copy_bl_to_pmem_buffer(std::vector<WriteBufferAllocation>::iterator allocation) {
   /* operation is a shared_ptr, so write_op is only good as long as operation is in scope */
   bufferlist::iterator i(&bl);
   m_perfcounter->inc(l_librbd_rwl_log_op_bytes, log_entry->write_bytes());
   ldout(m_cct, 20) << bl << dendl;
+  log_entry->init_pmem_buffer(allocation);
   i.copy((unsigned)log_entry->write_bytes(), (char*)log_entry->pmem_buffer);
 }
 

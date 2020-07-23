@@ -53,7 +53,7 @@ public:
   virtual bool is_writing_op() const {
     return false;
   }
-  virtual void copy_bl_to_pmem_buffer() {};
+  virtual void copy_bl_to_pmem_buffer(std::vector<WriteBufferAllocation>::iterator allocation) {};
   #ifdef WITH_RBD_RWL
   virtual void flush_pmem_buf_to_cache(PMEMobjpool *log_pool) {};
   #endif
@@ -145,7 +145,7 @@ public:
   }
 
   void complete(int r) override;
-  void copy_bl_to_pmem_buffer() override;
+  void copy_bl_to_pmem_buffer(std::vector<WriteBufferAllocation>::iterator allocation) override;
   #ifdef WITH_RBD_RWL
   void flush_pmem_buf_to_cache(PMEMobjpool *log_pool) override;
   #endif

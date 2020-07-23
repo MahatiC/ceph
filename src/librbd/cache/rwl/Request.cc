@@ -17,10 +17,11 @@ namespace rwl {
 
 template <typename T>
 C_BlockIORequest<T>::C_BlockIORequest(T &rwl, const utime_t arrived, io::Extents &&extents,
-                                      bufferlist&& bl, const int fadvise_flags, Context *user_req)
+                                      bufferlist&& bl, const int fadvise_flags, Context *user_req,
+                                      bool ssd_writelog)
   : rwl(rwl), image_extents(std::move(extents)),
-    bl(std::move(bl)), fadvise_flags(fadvise_flags),
-    user_req(user_req), image_extents_summary(image_extents), m_arrived_time(arrived) {
+    bl(std::move(bl)), fadvise_flags(fadvise_flags), user_req(user_req),
+    image_extents_summary(image_extents), m_arrived_time(arrived), ssd_writelog(ssd_writelog) {
   ldout(rwl.get_context(), 99) << this << dendl;
 }
 
@@ -78,9 +79,14 @@ void C_BlockIORequest<T>::complete_user_request(int r) {
   if (m_user_req_completed.compare_exchange_strong(initial, true)) {
     ldout(rwl.get_context(), 15) << this << " completing user req" << dendl;
     m_user_req_completed_time = ceph_clock_now();
-    user_req->complete(r);
-    // Set user_req as null as it is deleted
-    user_req = nullptr;
+    if (ssd_writelog) {
+      rwl.queue_ctx(user_req, r);
+      //rwl.m_image_ctx.op_work_queue->queue(user_req, r);
+    } else {
+      user_req->complete(r);
+      // Set user_req as null as it is deleted
+      user_req = nullptr;
+    }
   } else {
     ldout(rwl.get_context(), 20) << this << " user req already completed" << dendl;
   }
@@ -112,8 +118,8 @@ void C_BlockIORequest<T>::deferred() {
 template <typename T>
 C_WriteRequest<T>::C_WriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                                   bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
-                                  PerfCounters *perfcounter, Context *user_req)
-  : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req),
+                                  PerfCounters *perfcounter, Context *user_req, bool ssd_writelog)
+  : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, user_req, ssd_writelog),
     m_perfcounter(perfcounter), m_lock(lock) {
   ldout(rwl.get_context(), 99) << this << dendl;
 }
@@ -162,7 +168,11 @@ void C_WriteRequest<T>::setup_buffer_resources(
     uint64_t &bytes_cached, uint64_t &bytes_dirtied, uint64_t &bytes_allocated,
     uint64_t &number_lanes, uint64_t &number_log_entries,
     uint64_t &number_unpublished_reserves) {
-
+  if (this->ssd_writelog) {
+    rwl.update_resources(this, bytes_cached, bytes_dirtied, bytes_allocated,
+                         number_lanes, number_log_entries);
+    return;
+  }
   ceph_assert(!m_resources.allocated);
 
   auto image_extents_size = this->image_extents.size();
@@ -251,11 +261,16 @@ void C_WriteRequest<T>::setup_log_operations(DeferredContexts &on_exit) {
   op_set->extent_ops_appending->activate();
   op_set->extent_ops_persist->activate();
 
-  /* Write data */
+  rwl.add_into_log_map(log_entries, this);
+}
+
+template <typename T>
+void C_WriteRequest<T>::copy_pmem() {
+  auto allocation = m_resources.buffers.begin();
   for (auto &operation : op_set->operations) {
-    operation->copy_bl_to_pmem_buffer();
+    operation->copy_bl_to_pmem_buffer(allocation);
+    allocation++;
   }
-  rwl.add_into_log_map(log_entries);
 }
 
 template <typename T>
@@ -275,16 +290,7 @@ bool C_WriteRequest<T>::append_write_request(std::shared_ptr<SyncPoint> sync_poi
 template <typename T>
 void C_WriteRequest<T>::schedule_append() {
   ceph_assert(++m_appended == 1);
-  if (m_do_early_flush) {
-    /* This caller is waiting for persist, so we'll use their thread to
-     * expedite it */
-    rwl.flush_pmem_buffer(this->op_set->operations);
-    rwl.schedule_append(this->op_set->operations);
-  } else {
-    /* This is probably not still the caller's thread, so do the payload
-     * flushing/replicating later. */
-    rwl.schedule_flush_and_append(this->op_set->operations);
-  }
+  rwl.setup_schedule_append(this->op_set->operations, m_do_early_flush);
 }
 
 /**
@@ -351,9 +357,9 @@ C_FlushRequest<T>::C_FlushRequest(T &rwl, const utime_t arrived,
                                   io::Extents &&image_extents,
                                   bufferlist&& bl, const int fadvise_flags,
                                   ceph::mutex &lock, PerfCounters *perfcounter,
-                                  Context *user_req)
+                                  Context *user_req, bool ssd_writelog)
   : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), std::move(bl),
-                        fadvise_flags, user_req),
+                        fadvise_flags, user_req, ssd_writelog),
     m_lock(lock), m_perfcounter(perfcounter) {
   ldout(rwl.get_context(), 20) << this << dendl;
 }
@@ -414,8 +420,8 @@ std::ostream &operator<<(std::ostream &os,
 template <typename T>
 C_DiscardRequest<T>::C_DiscardRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                                       uint32_t discard_granularity_bytes, ceph::mutex &lock,
-                                      PerfCounters *perfcounter, Context *user_req)
-  : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), bufferlist(), 0, user_req),
+                                      PerfCounters *perfcounter, Context *user_req, bool ssd_writelog)
+  : C_BlockIORequest<T>(rwl, arrived, std::move(image_extents), bufferlist(), 0, user_req, ssd_writelog),
   m_discard_granularity_bytes(discard_granularity_bytes),
   m_lock(lock),
   m_perfcounter(perfcounter) {
@@ -464,7 +470,7 @@ void C_DiscardRequest<T>::setup_log_operations() {
       discard_req->release_cell();
     });
   op->init(current_sync_gen, persist_on_flush, rwl.get_last_op_sequence_num(), on_write_persist);
-  rwl.add_into_log_map(log_entries);
+  rwl.add_into_log_map(log_entries, this);
 }
 
 template <typename T>
@@ -518,8 +524,9 @@ std::ostream &operator<<(std::ostream &os,
 template <typename T>
 C_WriteSameRequest<T>::C_WriteSameRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                                           bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
-                                          PerfCounters *perfcounter, Context *user_req)
-  : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, lock, perfcounter, user_req) {
+                                          PerfCounters *perfcounter, Context *user_req, bool ssd_writelog)
+  : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, lock, perfcounter, user_req,
+                      ssd_writelog) {
   ldout(rwl.get_context(), 20) << this << dendl;
 }
 
@@ -544,6 +551,11 @@ void C_WriteSameRequest<T>::setup_buffer_resources(
     uint64_t &bytes_cached, uint64_t &bytes_dirtied, uint64_t &bytes_allocated,
     uint64_t &number_lanes, uint64_t &number_log_entries,
     uint64_t &number_unpublished_reserves) {
+  if (this->ssd_writelog) {
+    rwl.update_resources(this, bytes_cached, bytes_dirtied, bytes_allocated,
+                         number_lanes, number_log_entries);
+    return;
+  }
   ldout(rwl.get_context(), 20) << this << dendl;
   ceph_assert(this->image_extents.size() == 1);
   bytes_dirtied += this->image_extents[0].second;
@@ -577,8 +589,8 @@ template <typename T>
 C_CompAndWriteRequest<T>::C_CompAndWriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                                                 bufferlist&& cmp_bl, bufferlist&& bl, uint64_t *mismatch_offset,
                                                 int fadvise_flags, ceph::mutex &lock, PerfCounters *perfcounter,
-                                                Context *user_req)
-  : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, lock, perfcounter, user_req),
+                                                Context *user_req, bool ssd_writelog)
+  : C_WriteRequest<T>(rwl, arrived, std::move(image_extents), std::move(bl), fadvise_flags, lock, perfcounter, user_req, ssd_writelog),
   mismatch_offset(mismatch_offset), cmp_bl(std::move(cmp_bl)) {
   ldout(rwl.get_context(), 20) << dendl;
 }
@@ -625,9 +637,9 @@ std::ostream &operator<<(std::ostream &os,
 } // namespace cache
 } // namespace librbd
 
-template class librbd::cache::rwl::C_BlockIORequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
-template class librbd::cache::rwl::C_WriteRequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
-template class librbd::cache::rwl::C_FlushRequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
-template class librbd::cache::rwl::C_DiscardRequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
-template class librbd::cache::rwl::C_WriteSameRequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
-template class librbd::cache::rwl::C_CompAndWriteRequest<librbd::cache::ReplicatedWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_BlockIORequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_WriteRequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_FlushRequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_DiscardRequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_WriteSameRequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;
+template class librbd::cache::rwl::C_CompAndWriteRequest<librbd::cache::ParentWriteLog<librbd::ImageCtx> >;

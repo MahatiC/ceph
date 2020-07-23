@@ -55,6 +55,20 @@ public:
                          Context *ctx) {
     ceph_assert(false);
   };
+  virtual void writeback(librbd::cache::ImageWritebackInterface &image_writeback,
+                 Context *ctx, ceph::bufferlist &&bl) {
+    ceph_assert(false);
+  }
+  virtual bool is_write_entry() const {
+    return false;
+  }
+  virtual bool is_syncpoint() const {
+    return false;
+  }
+  virtual unsigned int get_aligned_data_size() const {
+    return 0;
+  }
+  virtual void remove_pmem_bl() {}
   virtual std::ostream& format(std::ostream &os) const;
   friend std::ostream &operator<<(std::ostream &os,
                                   const GenericLogEntry &entry);
@@ -82,6 +96,9 @@ public:
   SyncPointLogEntry &operator=(const SyncPointLogEntry&) = delete;
   bool can_retire() const override {
     return this->completed;
+  }
+  bool is_syncpoint() const override {
+    return true;
   }
   std::ostream& format(std::ostream &os) const;
   friend std::ostream &operator<<(std::ostream &os,
@@ -151,6 +168,7 @@ protected:
   }
 
   void init_pmem_bl();
+  void remove_pmem_bl() override;
 
 public:
   uint8_t *pmem_buffer = nullptr;
@@ -170,6 +188,7 @@ public:
   WriteLogEntry &operator=(const WriteLogEntry&) = delete;
   void init(bool has_data, std::vector<WriteBufferAllocation>::iterator allocation,
             uint64_t current_sync_gen, uint64_t last_op_sequence_num, bool persist_on_flush);
+  void init_pmem_buffer(std::vector<WriteBufferAllocation>::iterator allocation);
   BlockExtent block_extent();
   unsigned int reader_count() const;
   /* Returns a ref to a bl containing bufferptrs to the entry pmem buffer */
@@ -178,8 +197,19 @@ public:
   void copy_pmem_bl(bufferlist *out_bl) override;
   void writeback(librbd::cache::ImageWritebackInterface &image_writeback,
                  Context *ctx) override;
+  void writeback(librbd::cache::ImageWritebackInterface &image_writeback,
+                 Context *ctx, ceph::bufferlist &&bl) override;
   bool can_retire() const override {
     return (this->completed && this->get_flushed() && (0 == reader_count()));
+  }
+  bool is_write_entry() const override {
+    return true;
+  }
+  unsigned int get_aligned_data_size() const override {
+    if (pmem_bl.length()) {
+      return round_up_to(pmem_bl.length(), MIN_WRITE_ALLOC_SSD_SIZE);
+    }
+      return round_up_to(write_bytes(), MIN_WRITE_ALLOC_SSD_SIZE);
   }
   std::ostream &format(std::ostream &os) const;
   friend std::ostream &operator<<(std::ostream &os,
@@ -255,6 +285,8 @@ public:
   };
   void writeback(librbd::cache::ImageWritebackInterface &image_writeback,
                  Context *ctx) override;
+  void writeback(librbd::cache::ImageWritebackInterface &image_writeback,
+                 Context *ctx, ceph::bufferlist &&bl) override;
   std::ostream &format(std::ostream &os) const;
   friend std::ostream &operator<<(std::ostream &os,
                                   const WriteSameLogEntry &entry);

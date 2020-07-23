@@ -74,12 +74,16 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 #ifdef WITH_RBD_RWL
-void WriteLogEntry::init(bool has_data, std::vector<WriteBufferAllocation>::iterator allocation,
-                         uint64_t current_sync_gen, uint64_t last_op_sequence_num, bool persist_on_flush) {
-  ram_entry.has_data = 1;
+void WriteLogEntry::init_pmem_buffer(std::vector<WriteBufferAllocation>::iterator allocation) {
   ram_entry.write_data = allocation->buffer_oid;
   ceph_assert(!TOID_IS_NULL(ram_entry.write_data));
   pmem_buffer = D_RW(ram_entry.write_data);
+}
+#endif
+
+void WriteLogEntry::init(bool has_data, std::vector<WriteBufferAllocation>::iterator allocation,
+                         uint64_t current_sync_gen, uint64_t last_op_sequence_num, bool persist_on_flush) {
+  ram_entry.has_data = 1;
   ram_entry.sync_gen_number = current_sync_gen;
   if (persist_on_flush) {
     /* Persist on flush. Sequence #0 is never used. */
@@ -92,7 +96,6 @@ void WriteLogEntry::init(bool has_data, std::vector<WriteBufferAllocation>::iter
   ram_entry.sync_point = 0;
   ram_entry.discard = 0;
 }
-#endif
 
 void WriteLogEntry::init_pmem_bp() {
   ceph_assert(!pmem_bp.have_raw());
@@ -138,6 +141,10 @@ void WriteLogEntry::copy_pmem_bl(bufferlist *out_bl) {
   this->init_bl(cloned_bp, *out_bl);
 }
 
+void WriteLogEntry::remove_pmem_bl() {
+  pmem_bl.clear();
+}
+
 void WriteLogEntry::writeback(librbd::cache::ImageWritebackInterface &image_writeback,
                               Context *ctx) {
   /* Pass a copy of the pmem buffer to ImageWriteback (which may hang on to the bl even after flush()). */
@@ -147,6 +154,12 @@ void WriteLogEntry::writeback(librbd::cache::ImageWritebackInterface &image_writ
   entry_bl_copy.begin(0).copy(write_bytes(), entry_bl);
   image_writeback.aio_write({{ram_entry.image_offset_bytes, ram_entry.write_bytes}},
                             std::move(entry_bl), 0, ctx);
+}
+
+void WriteLogEntry::writeback(librbd::cache::ImageWritebackInterface &image_writeback,
+                              Context *ctx, ceph::bufferlist&& bl) {
+  image_writeback.aio_write({{ram_entry.image_offset_bytes, ram_entry.write_bytes}},
+                            std::move(bl), 0, ctx);
 }
 
 std::ostream& WriteLogEntry::format(std::ostream &os) const {
@@ -212,6 +225,12 @@ void WriteSameLogEntry::writeback(librbd::cache::ImageWritebackInterface &image_
   entry_bl_copy.begin(0).copy(write_bytes(), entry_bl);
   image_writeback.aio_writesame(ram_entry.image_offset_bytes, ram_entry.write_bytes,
                                 std::move(entry_bl), 0, ctx);
+}
+
+void WriteSameLogEntry::writeback(librbd::cache::ImageWritebackInterface &image_writeback,
+                                  Context *ctx, ceph::bufferlist &&bl) {
+  image_writeback.aio_writesame(ram_entry.image_offset_bytes, ram_entry.write_bytes,
+                                std::move(bl), 0, ctx);
 }
 
 std::ostream &WriteSameLogEntry::format(std::ostream &os) const {

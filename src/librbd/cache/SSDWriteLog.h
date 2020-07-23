@@ -36,7 +36,7 @@ class SSDWriteLog : public ParentWriteLog<ImageCtxT> {
 public:
 
   SSDWriteLog(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state);
-  ~SSDWriteLog();
+  ~SSDWriteLog() {}
   SSDWriteLog(const SSDWriteLog&) = delete;
   SSDWriteLog &operator=(const SSDWriteLog&) = delete;
 
@@ -50,8 +50,43 @@ private:
   using C_CompAndWriteRequestT = rwl::C_CompAndWriteRequest<This>;
 
   using ParentWriteLog<ImageCtxT>::m_image_ctx;
+  using ParentWriteLog<ImageCtxT>::m_log_entries;
+  using ParentWriteLog<ImageCtxT>::m_lock;
+  using ParentWriteLog<ImageCtxT>::m_perfcounter;
+  using ParentWriteLog<ImageCtxT>::m_bytes_allocated;
+  using ParentWriteLog<ImageCtxT>::m_async_op_tracker;
+  using ParentWriteLog<ImageCtxT>::m_ops_to_append;
 
-  //classes and methods to faciliate block device operations
+  uint64_t m_log_pool_config_size; // Configured size of RWL
+  uint64_t m_bytes_cached = 0;    // Total bytes used in write buffers
+  uint64_t m_first_free_entry = 0;  // Entries from here to m_first_valid_entry-1 are free
+  uint64_t m_first_valid_entry = 0; // Entries from here to m_first_free_entry-1 are valid
+  uint64_t m_log_pool_ring_buffer_size; /* Size of ring buffer */
+  std::atomic<int> m_async_update_superblock = {0};
+
+  void alloc_op_log_entries(rwl::GenericLogOperations &ops);
+  int append_op_log_entries(rwl::GenericLogOperations &ops);
+  bool retire_entries(const unsigned long int frees_per_tx);
+  bool has_sync_point_logs(rwl::GenericLogOperations &ops);
+
+  void release_ram(const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
+  void process_work() override;
+  void schedule_append_ops(rwl::GenericLogOperations &ops) override;
+  void append_scheduled_ops(void) override;
+  void setup_schedule_append(rwl::GenericLogOperationsVector &ops,
+                             bool do_early_flush) override;
+  Context *construct_flush_entry_ctx(
+       const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
+  bool alloc_resources(C_BlockIORequestT *req) override;
+  void update_resources(C_WriteRequestT *req,
+      uint64_t &bytes_cached, uint64_t &bytes_dirtied, uint64_t &bytes_allocated,
+      uint64_t &number_lanes, uint64_t &number_log_entries) override;
+  void update_resources(C_WriteSameRequestT *req,
+      uint64_t &bytes_cached, uint64_t &bytes_dirtied, uint64_t &bytes_allocated,
+      uint64_t &number_lanes, uint64_t &number_log_entries) override;
+
+//classes and methods to faciliate block device operations
+private:
   struct WriteLogPoolRootUpdate {
     std::shared_ptr<rwl::WriteLogPoolRoot> root;
     Context *ctx;
@@ -65,7 +100,7 @@ private:
   class AioTransContext {
   public:
     Context *on_finish;
-    IOContext ioc;
+    ::IOContext ioc;
     explicit AioTransContext(CephContext* cct, Context *cb)
       :on_finish(cb), ioc(cct, this) {
     }
@@ -85,9 +120,9 @@ private:
                            bufferlist *bl, Context *ctx);
   void aio_read_data_block(std::vector<rwl::WriteLogPmemEntry*> &log_entries,
                            std::vector<bufferlist *> &bls, Context *ctx);
-  void read_with_pos(uint64_t off, uint64_t len, bufferlist *bl, IOContext *ioctx);
-  void append_ops(rwl::GenericLogOperations &ops,
-                  Context *ctx, uint64_t *new_first_free_entry);
+  void read_with_pos(uint64_t off, uint64_t len, bufferlist *bl, ::IOContext *ioctx);
+  void append_ops(rwl::GenericLogOperations &ops, Context *ctx,
+                  uint64_t *new_first_free_entry, uint64_t &bytes_allocated);
   void pre_io_check(rwl::WriteLogPmemEntry *log_entry, uint64_t &length);
   void write_log_entries(rwl::GenericLogEntriesVector log_entries,
                          AioTransContext *aio);

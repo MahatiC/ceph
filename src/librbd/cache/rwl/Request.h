@@ -46,7 +46,7 @@ public:
   bool waited_buffers = false;          /* This IO waited for data buffers (pmemobj_reserve() failed) */
 
   C_BlockIORequest(T &rwl, const utime_t arrived, io::Extents &&extents,
-                   bufferlist&& bl, const int fadvise_flags, Context *user_req);
+                   bufferlist&& bl, const int fadvise_flags, Context *user_req, bool ssd_writelog);
   ~C_BlockIORequest() override;
   C_BlockIORequest(const C_BlockIORequest&) = delete;
   C_BlockIORequest &operator=(const C_BlockIORequest&) = delete;
@@ -66,6 +66,8 @@ public:
   virtual void deferred_handler() = 0;
 
   virtual void dispatch()  = 0;
+
+  virtual void copy_pmem() {};
 
   virtual const char *get_name() const {
     return "C_BlockIORequest";
@@ -108,6 +110,7 @@ protected:
   utime_t m_user_req_completed_time;
   std::atomic<bool> m_deferred = {false}; /* Deferred because this or a prior IO had to wait for write resources */
   WriteRequestResources m_resources;
+  bool ssd_writelog = false;            /* to check if ssd cache writelog instance is being used */
 
 private:
   std::atomic<bool> m_user_req_completed = {false};
@@ -134,7 +137,7 @@ public:
 
   C_WriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                  bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
-                 PerfCounters *perfcounter, Context *user_req);
+                 PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
   ~C_WriteRequest() override;
 
@@ -148,6 +151,8 @@ public:
     // TODO: Add in later PRs
   }
   bool alloc_resources() override;
+
+  void copy_pmem() override;
 
   void deferred_handler() override { }
 
@@ -202,7 +207,7 @@ public:
                  io::Extents &&image_extents,
                  bufferlist&& bl, const int fadvise_flags,
                  ceph::mutex &lock, PerfCounters *perfcounter,
-                 Context *user_req);
+                 Context *user_req, bool ssd_writelog);
 
   ~C_FlushRequest() override {}
 
@@ -246,7 +251,7 @@ public:
 
   C_DiscardRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                    uint32_t discard_granularity_bytes, ceph::mutex &lock,
-                   PerfCounters *perfcounter, Context *user_req);
+                   PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
   ~C_DiscardRequest() override;
   void finish_req(int r) override {}
@@ -289,7 +294,7 @@ public:
   using C_BlockIORequest<T>::rwl;
   C_WriteSameRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                      bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
-                     PerfCounters *perfcounter, Context *user_req);
+                     PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
   ~C_WriteSameRequest() override;
 
@@ -328,7 +333,7 @@ public:
   C_CompAndWriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
                         bufferlist&& cmp_bl, bufferlist&& bl, uint64_t *mismatch_offset,
                         int fadvise_flags, ceph::mutex &lock, PerfCounters *perfcounter,
-                        Context *user_req);
+                        Context *user_req, bool ssd_writelog);
   ~C_CompAndWriteRequest();
 
   void finish_req(int r) override;

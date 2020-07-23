@@ -36,11 +36,11 @@ typedef WriteLogCache<ImageCtx>::Extents Extents;
 
 template <typename I>
 WriteLogCache<I>::WriteLogCache(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state,
-                               bool isRWL) {
-  if (isRWL) {
-    m_write_log = new ReplicatedWriteLog<I>(image_ctx, cache_state);
-  } else {
+                               bool ssd_writelog) {
+  if (ssd_writelog) {
     m_write_log = new SSDWriteLog<I>(image_ctx, cache_state);
+  } else {
+    m_write_log = new ReplicatedWriteLog<I>(image_ctx, cache_state);
   }
 }
 
@@ -71,6 +71,11 @@ void WriteLogCache<I>::aio_discard(uint64_t offset, uint64_t length,
                                         uint32_t discard_granularity_bytes,
                                         Context *on_finish) {
   m_write_log->discard(offset, length, discard_granularity_bytes, on_finish);
+}
+
+template <typename I>
+void WriteLogCache<I>::aio_flush(io::FlushSource flush_source, Context *on_finish) {
+  m_write_log->flush_aio(flush_source, on_finish);
 }
 
 template <typename I>

@@ -26,7 +26,7 @@ public:
   using typename ImageCache<ImageCtxT>::Extents;
 
   WriteLogCache(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state,
-                bool isRWL);
+                bool ssd_writelog=false);
   ~WriteLogCache();
   WriteLogCache(const WriteLogCache&) = delete;
   WriteLogCache &operator=(const WriteLogCache&) = delete;

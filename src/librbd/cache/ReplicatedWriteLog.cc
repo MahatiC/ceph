@@ -36,7 +36,7 @@ const unsigned long int OPS_APPENDED_TOGETHER = MAX_ALLOC_PER_TRANSACTION;
 
 template <typename I>
 ReplicatedWriteLog<I>::ReplicatedWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
-  : ParentWriteLog<I>(image_ctx, cache_state)
+  : ParentWriteLog<I>(image_ctx, cache_state, false)
 {
 }
 
@@ -366,10 +366,39 @@ void ReplicatedWriteLog<I>::flush_then_append_scheduled_ops(void)
      * get to the log message append step. */
     if (ops.size()) {
       flush_pmem_buffer(ops);
-      this->schedule_append(ops);
+      schedule_append_ops(ops);
     }
   } while (ops_remain);
-  this->append_scheduled_ops();
+  append_scheduled_ops();
+}
+
+/*
+ * Performs the log event append operation for all of the scheduled
+ * events.
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::append_scheduled_ops(void) {
+  GenericLogOperations ops;
+  int append_result = 0;
+  bool ops_remain = false;
+  bool appending = false; /* true if we set m_appending */
+  ldout(m_image_ctx.cct, 20) << dendl;
+  do {
+    ops.clear();
+    this->append_scheduled(ops, ops_remain, appending, true);
+
+    if (ops.size()) {
+      std::lock_guard locker(this->m_log_append_lock);
+      alloc_op_log_entries(ops);
+      append_result = append_op_log_entries(ops);
+    }
+
+    int num_ops = ops.size();
+    if (num_ops) {
+      /* New entries may be flushable. Completion will wake up flusher. */
+      this->complete_op_log_entries(std::move(ops), append_result);
+    }
+  } while (ops_remain);
 }
 
 template <typename I>
@@ -383,6 +412,49 @@ void ReplicatedWriteLog<I>::enlist_op_flusher()
       this->m_async_op_tracker.finish_op();
     });
   this->m_work_queue.queue(flush_ctx);
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::setup_schedule_append(rwl::GenericLogOperationsVector &ops,
+                                                  bool do_early_flush) {
+  if (do_early_flush) {
+    /* This caller is waiting for persist, so we'll use their thread to
+     * expedite it */
+    flush_pmem_buffer(ops);
+    this->schedule_append(ops);
+  } else {
+    /* This is probably not still the caller's thread, so do the payload
+     * flushing/replicating later. */
+    schedule_flush_and_append(ops);
+  }
+}
+
+/*
+ * Takes custody of ops. They'll all get their log entries appended,
+ * and have their on_write_persist contexts completed once they and
+ * all prior log entries are persisted everywhere.
+ */
+template <typename I>
+void ReplicatedWriteLog<I>::schedule_append_ops(GenericLogOperations &ops)
+{
+  bool need_finisher;
+  GenericLogOperationsVector appending;
+
+  std::copy(std::begin(ops), std::end(ops), std::back_inserter(appending));
+  {
+    std::lock_guard locker(m_lock);
+
+    need_finisher = this->m_ops_to_append.empty() && !this->m_appending;
+    this->m_ops_to_append.splice(this->m_ops_to_append.end(), ops);
+  }
+
+  if (need_finisher) {
+    this->enlist_op_appender();
+  }
+
+  for (auto &op : appending) {
+    op->appending();
+  }
 }
 
 /*
@@ -404,6 +476,73 @@ void ReplicatedWriteLog<I>::schedule_flush_and_append(GenericLogOperationsVector
 
   if (need_finisher) {
     enlist_op_flusher();
+  }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::process_work() {
+  CephContext *cct = m_image_ctx.cct;
+  int max_iterations = 4;
+  bool wake_up_requested = false;
+  uint64_t aggressive_high_water_bytes = this->m_bytes_allocated_cap * AGGRESSIVE_RETIRE_HIGH_WATER;
+  uint64_t high_water_bytes = this->m_bytes_allocated_cap * RETIRE_HIGH_WATER;
+  uint64_t low_water_bytes = this->m_bytes_allocated_cap * RETIRE_LOW_WATER;
+  uint64_t aggressive_high_water_entries = this->m_total_log_entries * AGGRESSIVE_RETIRE_HIGH_WATER;
+  uint64_t high_water_entries = this->m_total_log_entries * RETIRE_HIGH_WATER;
+  uint64_t low_water_entries = this->m_total_log_entries * RETIRE_LOW_WATER;
+
+  ldout(cct, 20) << dendl;
+
+  do {
+    {
+      std::lock_guard locker(m_lock);
+      this->m_wake_up_requested = false;
+    }
+    if (this->m_alloc_failed_since_retire || this->m_invalidating ||
+        this->m_bytes_allocated > high_water_bytes ||
+        (m_log_entries.size() > high_water_entries)) {
+      int retired = 0;
+      utime_t started = ceph_clock_now();
+      ldout(m_image_ctx.cct, 10) << "alloc_fail=" << this->m_alloc_failed_since_retire
+                                 << ", allocated > high_water="
+                                 << (this->m_bytes_allocated > high_water_bytes)
+                                 << ", allocated_entries > high_water="
+                                 << (m_log_entries.size() > high_water_entries)
+                                 << dendl;
+      while (this->m_alloc_failed_since_retire || this->m_invalidating ||
+            (this->m_bytes_allocated > high_water_bytes) ||
+            (m_log_entries.size() > high_water_entries) ||
+            (((this->m_bytes_allocated > low_water_bytes) || (m_log_entries.size() > low_water_entries)) &&
+            (utime_t(ceph_clock_now() - started).to_msec() < RETIRE_BATCH_TIME_LIMIT_MS))) {
+        if (!retire_entries((this->m_shutting_down || this->m_invalidating ||
+           (this->m_bytes_allocated > aggressive_high_water_bytes) ||
+           (m_log_entries.size() > aggressive_high_water_entries))
+            ? MAX_ALLOC_PER_TRANSACTION
+            : MAX_FREE_PER_TRANSACTION)) {
+          break;
+        }
+        retired++;
+        this->dispatch_deferred_writes();
+        this->process_writeback_dirty_entries();
+      }
+      ldout(m_image_ctx.cct, 10) << "Retired " << retired << " times" << dendl;
+    }
+    this->dispatch_deferred_writes();
+    this->process_writeback_dirty_entries();
+
+    {
+      std::lock_guard locker(m_lock);
+      wake_up_requested = this->m_wake_up_requested;
+    }
+  } while (wake_up_requested && --max_iterations > 0);
+
+  {
+    std::lock_guard locker(m_lock);
+    this->m_wake_up_scheduled = false;
+    /* Reschedule if it's still requested */
+    if (this->m_wake_up_requested) {
+      this->wake_up();
+    }
   }
 }
 
@@ -462,6 +601,74 @@ void ReplicatedWriteLog<I>::persist_last_flushed_sync_gen()
     } TX_FINALLY {
     } TX_END;
   }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::reserve_pmem(C_BlockIORequestT *req,
+                                         bool &alloc_succeeds, bool &no_space) {
+  std::vector<WriteBufferAllocation>& buffers = req->get_resources_buffers();
+  for (auto &buffer : buffers) {
+    utime_t before_reserve = ceph_clock_now();
+    buffer.buffer_oid = pmemobj_reserve(m_log_pool,
+                                        &buffer.buffer_alloc_action,
+                                        buffer.allocation_size,
+                                        0 /* Object type */);
+    buffer.allocation_lat = ceph_clock_now() - before_reserve;
+    if (TOID_IS_NULL(buffer.buffer_oid)) {
+      if (!req->has_io_waited_for_buffers()) {
+        req->set_io_waited_for_entries(true);
+      }
+      ldout(m_image_ctx.cct, 5) << "can't allocate all data buffers: "
+                                << pmemobj_errormsg() << ". "
+                                << *req << dendl;
+      alloc_succeeds = false;
+      no_space = true; /* Entries need to be retired */
+      break;
+    } else {
+      buffer.allocated = true;
+    }
+    ldout(m_image_ctx.cct, 20) << "Allocated " << buffer.buffer_oid.oid.pool_uuid_lo
+                               << "." << buffer.buffer_oid.oid.off
+                               << ", size=" << buffer.allocation_size << dendl;
+  }
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::copy_pmem(C_BlockIORequestT *req) {
+  req->copy_pmem();
+}
+
+template <typename I>
+bool ReplicatedWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
+  bool alloc_succeeds = true;
+  uint64_t bytes_allocated = 0;
+  uint64_t bytes_cached = 0;
+  uint64_t bytes_dirtied = 0;
+  uint64_t num_lanes = 0;
+  uint64_t num_unpublished_reserves = 0;
+  uint64_t num_log_entries = 0;
+
+  ldout(m_image_ctx.cct, 20) << dendl;
+  // Setup buffer, and get all the number of required resources
+  req->setup_buffer_resources(bytes_cached, bytes_dirtied, bytes_allocated,
+                              num_lanes, num_log_entries, num_unpublished_reserves);
+
+  alloc_succeeds = this->check_allocation(req, bytes_cached, bytes_dirtied, bytes_allocated,
+                              num_lanes, num_log_entries, num_unpublished_reserves,
+                              this->m_bytes_allocated_cap);
+
+  std::vector<WriteBufferAllocation>& buffers = req->get_resources_buffers();
+  if (!alloc_succeeds) {
+    /* On alloc failure, free any buffers we did allocate */
+    for (auto &buffer : buffers) {
+      if (buffer.allocated) {
+        pmemobj_cancel(m_log_pool, &buffer.buffer_alloc_action, 1);
+      }
+    }
+  }
+
+  req->set_allocated(alloc_succeeds);
+  return alloc_succeeds;
 }
 
 } // namespace cache

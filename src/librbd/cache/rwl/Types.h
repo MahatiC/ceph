@@ -178,6 +178,11 @@ const double AGGRESSIVE_RETIRE_HIGH_WATER = 0.75;
 const double RETIRE_HIGH_WATER = 0.50;
 const double RETIRE_LOW_WATER = 0.40;
 const int RETIRE_BATCH_TIME_LIMIT_MS = 250;
+const uint64_t CONTROL_BLOCK_MAX_LOG_ENTRIES = 32;
+const uint64_t SPAN_MAX_DATA_LEN = (16*1024*1024);
+
+/* offset of ring on SSD */
+const uint64_t DATA_RING_BUFFER_OFFSET = 8192;
 
 /* Defer a set of Contexts until destruct/exit. Used for deferring
  * work on a given thread until a required lock is dropped. */

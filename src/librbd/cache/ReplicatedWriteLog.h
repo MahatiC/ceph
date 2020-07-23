@@ -35,7 +35,7 @@ public:
   typedef io::Extents Extents;
 
   ReplicatedWriteLog(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state);
-  ~ReplicatedWriteLog();
+  ~ReplicatedWriteLog() {}
   ReplicatedWriteLog(const ReplicatedWriteLog&) = delete;
   ReplicatedWriteLog &operator=(const ReplicatedWriteLog&) = delete;
 
@@ -55,14 +55,22 @@ private:
   using ParentWriteLog<ImageCtxT>::m_perfcounter;
   using ParentWriteLog<ImageCtxT>::m_ops_to_flush;
 
-  void alloc_op_log_entries(rwl::GenericLogOperations &ops) override;
-  int append_op_log_entries(rwl::GenericLogOperations &ops) override;
+  void process_work() override;
+  void schedule_append_ops(rwl::GenericLogOperations &ops) override;
+  void append_scheduled_ops(void) override;
+  void reserve_pmem(C_BlockIORequestT *req, bool &alloc_succeeds, bool &no_space) override;
+  void copy_pmem(C_BlockIORequestT *req) override;
   bool retire_entries(const unsigned long int frees_per_tx) override;
   void persist_last_flushed_sync_gen() override;
+  bool alloc_resources(C_BlockIORequestT *req) override;
   void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) override;
+  void setup_schedule_append(rwl::GenericLogOperationsVector &ops,
+                             bool do_early_flush) override;
   Context *construct_flush_entry_ctx(
-       const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
+        const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
 
+  void alloc_op_log_entries(rwl::GenericLogOperations &ops);
+  int append_op_log_entries(rwl::GenericLogOperations &ops);
   void flush_then_append_scheduled_ops(void);
   void enlist_op_flusher();
   void flush_op_log_entries(rwl::GenericLogOperationsVector &ops);
