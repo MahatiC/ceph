@@ -312,6 +312,8 @@ protected:
   virtual void process_work() = 0;
   virtual void append_scheduled_ops(void) = 0;
   virtual void schedule_append_ops(rwl::GenericLogOperations &ops) = 0;
+  virtual void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) = 0;
+  virtual void get_pool_name(const std::string log_poolset_name) {}
   virtual void release_ram(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {};
   virtual bool retire_entries(const unsigned long int frees_per_tx) {return false;};
   virtual void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) {}

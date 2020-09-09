@@ -49,18 +49,17 @@ private:
   using C_WriteSameRequestT = rwl::C_WriteSameRequest<This>;
   using C_CompAndWriteRequestT = rwl::C_CompAndWriteRequest<This>;
 
-  using ParentWriteLog<ImageCtxT>::m_image_ctx;
-  using ParentWriteLog<ImageCtxT>::m_log_entries;
   using ParentWriteLog<ImageCtxT>::m_lock;
+  using ParentWriteLog<ImageCtxT>::m_log_entries;
+  using ParentWriteLog<ImageCtxT>::m_image_ctx;
   using ParentWriteLog<ImageCtxT>::m_perfcounter;
   using ParentWriteLog<ImageCtxT>::m_bytes_allocated;
   using ParentWriteLog<ImageCtxT>::m_async_op_tracker;
   using ParentWriteLog<ImageCtxT>::m_ops_to_append;
+  using ParentWriteLog<ImageCtxT>::m_cache_state;
+  using ParentWriteLog<ImageCtxT>::m_first_free_entry;
+  using ParentWriteLog<ImageCtxT>::m_first_valid_entry;
 
-  uint64_t m_log_pool_config_size; // Configured size of RWL
-  uint64_t m_bytes_cached = 0;    // Total bytes used in write buffers
-  uint64_t m_first_free_entry = 0;  // Entries from here to m_first_valid_entry-1 are free
-  uint64_t m_first_valid_entry = 0; // Entries from here to m_first_free_entry-1 are valid
   uint64_t m_log_pool_ring_buffer_size; /* Size of ring buffer */
   std::atomic<int> m_async_update_superblock = {0};
 
@@ -73,6 +72,7 @@ private:
   void process_work() override;
   void schedule_append_ops(rwl::GenericLogOperations &ops) override;
   void append_scheduled_ops(void) override;
+  void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) override;
   void setup_schedule_append(rwl::GenericLogOperationsVector &ops,
                              bool do_early_flush) override;
   Context *construct_flush_entry_ctx(
@@ -133,7 +133,7 @@ private:
   void update_root_scheduled_ops();
   void enlist_op_update_root();
 
-  void aio_cache_cb(void *priv, void *priv2) {
+  static void aio_cache_cb(void *priv, void *priv2) {
     AioTransContext *c = static_cast<AioTransContext*>(priv2);
     c->aio_finish();
   }

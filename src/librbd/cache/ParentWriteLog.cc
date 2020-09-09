@@ -533,7 +533,6 @@ template <typename I>
 void ParentWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   ldout(cct, 20) << dendl;
-  TOID(struct WriteLogPoolRoot) pool_root;
   ceph_assert(m_cache_state);
   std::lock_guard locker(m_lock);
   ceph_assert(!m_initialized);
@@ -547,14 +546,8 @@ void ParentWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
   std::string log_poolset_name = rwl_path + "/rbd-rwl." + pool_name + "." + m_image_ctx.id + ".poolset";
   m_log_pool_config_size = max(m_cache_state->size, MIN_POOL_SIZE);
 
-  if (access(log_poolset_name.c_str(), F_OK) == 0) {
-    m_log_pool_name = log_poolset_name;
-    m_log_is_poolset = true;
-  } else {
-    m_log_pool_name = log_pool_name;
-    ldout(cct, 5) << "Poolset file " << log_poolset_name
-                  << " not present (or can't open). Using unreplicated pool" << dendl;
-  }
+  m_log_pool_name = log_pool_name;
+  get_pool_name(log_poolset_name);
 
   if ((!m_cache_state->present) &&
       (access(m_log_pool_name.c_str(), F_OK) == 0)) {
@@ -570,113 +563,7 @@ void ParentWriteLog<I>::rwl_init(Context *on_finish, DeferredContexts &later) {
     }
   }
 
-  if (access(m_log_pool_name.c_str(), F_OK) != 0) {
-    if ((m_log_pool =
-         pmemobj_create(m_log_pool_name.c_str(),
-                        m_rwl_pool_layout_name,
-                        m_log_pool_config_size,
-                        (S_IWUSR | S_IRUSR))) == NULL) {
-      lderr(cct) << "failed to create pool (" << m_log_pool_name << ")"
-                 << pmemobj_errormsg() << dendl;
-      m_cache_state->present = false;
-      m_cache_state->clean = true;
-      m_cache_state->empty = true;
-      /* TODO: filter/replace errnos that are meaningless to the caller */
-      on_finish->complete(-errno);
-      return;
-    }
-    m_cache_state->present = true;
-    m_cache_state->clean = true;
-    m_cache_state->empty = true;
-    pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
-
-    /* new pool, calculate and store metadata */
-    size_t effective_pool_size = (size_t)(m_log_pool_config_size * USABLE_SIZE);
-    size_t small_write_size = MIN_WRITE_ALLOC_SIZE + BLOCK_ALLOC_OVERHEAD_BYTES + sizeof(struct WriteLogPmemEntry);
-    uint64_t num_small_writes = (uint64_t)(effective_pool_size / small_write_size);
-    if (num_small_writes > MAX_LOG_ENTRIES) {
-      num_small_writes = MAX_LOG_ENTRIES;
-    }
-    if (num_small_writes <= 2) {
-      lderr(cct) << "num_small_writes needs to > 2" << dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-    m_log_pool_actual_size = m_log_pool_config_size;
-    m_bytes_allocated_cap = effective_pool_size;
-    /* Log ring empty */
-    m_first_free_entry = 0;
-    m_first_valid_entry = 0;
-    TX_BEGIN(m_log_pool) {
-      TX_ADD(pool_root);
-      D_RW(pool_root)->header.layout_version = RWL_POOL_VERSION;
-      D_RW(pool_root)->log_entries =
-        TX_ZALLOC(struct WriteLogPmemEntry,
-                  sizeof(struct WriteLogPmemEntry) * num_small_writes);
-      D_RW(pool_root)->pool_size = m_log_pool_actual_size;
-      D_RW(pool_root)->flushed_sync_gen = m_flushed_sync_gen;
-      D_RW(pool_root)->block_size = MIN_WRITE_ALLOC_SIZE;
-      D_RW(pool_root)->num_log_entries = num_small_writes;
-      D_RW(pool_root)->first_free_entry = m_first_free_entry;
-      D_RW(pool_root)->first_valid_entry = m_first_valid_entry;
-    } TX_ONCOMMIT {
-      m_total_log_entries = D_RO(pool_root)->num_log_entries;
-      m_free_log_entries = D_RO(pool_root)->num_log_entries - 1; // leave one free
-    } TX_ONABORT {
-      m_total_log_entries = 0;
-      m_free_log_entries = 0;
-      lderr(cct) << "failed to initialize pool (" << m_log_pool_name << ")" << dendl;
-      on_finish->complete(-pmemobj_tx_errno());
-      return;
-    } TX_FINALLY {
-    } TX_END;
-  } else {
-    m_cache_state->present = true;
-    /* Open existing pool */
-    if ((m_log_pool =
-         pmemobj_open(m_log_pool_name.c_str(),
-                      m_rwl_pool_layout_name)) == NULL) {
-      lderr(cct) << "failed to open pool (" << m_log_pool_name << "): "
-                 << pmemobj_errormsg() << dendl;
-      on_finish->complete(-errno);
-      return;
-    }
-    pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
-    if (D_RO(pool_root)->header.layout_version != RWL_POOL_VERSION) {
-      // TODO: will handle upgrading version in the future
-      lderr(cct) << "Pool layout version is " << D_RO(pool_root)->header.layout_version
-                 << " expected " << RWL_POOL_VERSION << dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-    if (D_RO(pool_root)->block_size != MIN_WRITE_ALLOC_SIZE) {
-      lderr(cct) << "Pool block size is " << D_RO(pool_root)->block_size
-                 << " expected " << MIN_WRITE_ALLOC_SIZE << dendl;
-      on_finish->complete(-EINVAL);
-      return;
-    }
-    m_log_pool_actual_size = D_RO(pool_root)->pool_size;
-    m_flushed_sync_gen = D_RO(pool_root)->flushed_sync_gen;
-    m_total_log_entries = D_RO(pool_root)->num_log_entries;
-    m_first_free_entry = D_RO(pool_root)->first_free_entry;
-    m_first_valid_entry = D_RO(pool_root)->first_valid_entry;
-    if (m_first_free_entry < m_first_valid_entry) {
-      /* Valid entries wrap around the end of the ring, so first_free is lower
-       * than first_valid.  If first_valid was == first_free+1, the entry at
-       * first_free would be empty. The last entry is never used, so in
-       * that case there would be zero free log entries. */
-      m_free_log_entries = m_total_log_entries - (m_first_valid_entry - m_first_free_entry) -1;
-    } else {
-      /* first_valid is <= first_free. If they are == we have zero valid log
-       * entries, and n-1 free log entries */
-      m_free_log_entries = m_total_log_entries - (m_first_free_entry - m_first_valid_entry) -1;
-    }
-    size_t effective_pool_size = (size_t)(m_log_pool_config_size * USABLE_SIZE);
-    m_bytes_allocated_cap = effective_pool_size;
-    load_existing_entries(later);
-    m_cache_state->clean = m_dirty_log_entries.empty();
-    m_cache_state->empty = m_log_entries.empty();
-  }
+  initialize_pool(on_finish, later);
 
   ldout(cct,1) << "pool " << m_log_pool_name << " has " << m_total_log_entries
                << " log entries, " << m_free_log_entries << " of which are free."

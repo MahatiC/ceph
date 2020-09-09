@@ -54,6 +54,9 @@ private:
   using ParentWriteLog<ImageCtxT>::m_image_ctx;
   using ParentWriteLog<ImageCtxT>::m_perfcounter;
   using ParentWriteLog<ImageCtxT>::m_ops_to_flush;
+  using ParentWriteLog<ImageCtxT>::m_cache_state;
+  using ParentWriteLog<ImageCtxT>::m_first_free_entry;
+  using ParentWriteLog<ImageCtxT>::m_first_valid_entry;
 
   void process_work() override;
   void schedule_append_ops(rwl::GenericLogOperations &ops) override;
@@ -68,6 +71,8 @@ private:
                              bool do_early_flush) override;
   Context *construct_flush_entry_ctx(
         const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
+  void get_pool_name(const std::string log_poolset_name) override;
+  void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) override;
 
   void alloc_op_log_entries(rwl::GenericLogOperations &ops);
   int append_op_log_entries(rwl::GenericLogOperations &ops);

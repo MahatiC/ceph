@@ -156,6 +156,101 @@ void SSDWriteLog<I>::append_scheduled_ops(void) {
   }
 }
 
+template <typename I>
+void SSDWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &later) {
+  CephContext *cct = m_image_ctx.cct;
+  ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
+  if (access(this->m_log_pool_name.c_str(), F_OK) != 0) {
+    int fd = ::open(this->m_log_pool_name.c_str(), O_RDWR|O_CREAT, 0644);
+    bool succeed = true;
+    if (fd >= 0) {
+      if (truncate(this->m_log_pool_name.c_str(), this->m_log_pool_config_size) != 0) {
+        succeed = false;
+      }
+      ::close(fd);
+    } else {
+      succeed = false;
+    }
+    if (!succeed) {
+      m_cache_state->present = false;
+      m_cache_state->clean = true;
+      m_cache_state->empty = true;
+      /* TODO: filter/replace errnos that are meaningless to the caller */
+      on_finish->complete(-errno);
+      return;
+    }
+
+    bdev = BlockDevice::create(cct, this->m_log_pool_name, aio_cache_cb,
+        nullptr, nullptr, nullptr);
+    int r = bdev->open(this->m_log_pool_name);
+    if (r < 0) {
+      delete bdev;
+      on_finish->complete(-1);
+      return;
+    }
+    m_cache_state->present = true;
+    m_cache_state->clean = true;
+    m_cache_state->empty = true;
+    /* new pool, calculate and store metadata */
+    size_t small_write_size = MIN_WRITE_ALLOC_SIZE + sizeof(struct WriteLogPmemEntry);
+
+    uint64_t num_small_writes = (uint64_t)(this->m_log_pool_config_size / small_write_size);
+    if (num_small_writes > MAX_LOG_ENTRIES) {
+      num_small_writes = MAX_LOG_ENTRIES;
+    }
+    assert(num_small_writes > 2);
+    this->m_log_pool_ring_buffer_size = this->m_log_pool_config_size - DATA_RING_BUFFER_OFFSET;
+    /* Log ring empty */
+    m_first_free_entry = DATA_RING_BUFFER_OFFSET;
+    m_first_valid_entry = DATA_RING_BUFFER_OFFSET;
+
+    pool_size = this->m_log_pool_config_size;
+    auto new_root = std::make_shared<WriteLogPoolRoot>(pool_root);
+    new_root->pool_size = this->m_log_pool_config_size;
+    new_root->flushed_sync_gen = this->m_flushed_sync_gen;
+    new_root->block_size = MIN_WRITE_ALLOC_SIZE;
+    new_root->first_free_entry = m_first_free_entry;
+    new_root->first_valid_entry = m_first_valid_entry;
+    new_root->num_log_entries = num_small_writes;
+    pool_root = *new_root;
+
+    int r = update_pool_root_sync(new_root);
+    if (r != 0) {
+      this->m_total_log_entries = 0;
+      this->m_free_log_entries = 0;
+      lderr(m_image_ctx.cct) << "failed to initialize pool ("
+                             << this->m_log_pool_name << ")" << dendl;
+      on_finish->complete(r1);
+    }
+    this->m_total_log_entries = new_root->num_log_entries;
+    this->m_free_log_entries = new_root->num_log_entries - 1;
+   } else {
+     m_cache_state->present = true;
+     bdev = BlockDevice::create(cct, this->m_log_pool_name, aio_cache_cb,
+         static_cast<void*>(this), nullptr, static_cast<void*>(this));
+     r = bdev->open(this->m_log_pool_name);
+     if (r < 0) {
+       delete bdev;
+       on_finish->complete(-1);
+       return;
+     }
+     this->load_existing_entries(later);
+     if (m_first_free_entry < m_first_valid_entry) {
+      /* Valid entries wrap around the end of the ring, so first_free is lower
+       * than first_valid.  If first_valid was == first_free+1, the entry at
+       * first_free would be empty. The last entry is never used, so in
+       * that case there would be zero free log entries. */
+       this->m_free_log_entries = this->m_total_log_entries - (m_first_valid_entry - m_first_free_entry) -1;
+     } else {
+      /* first_valid is <= first_free. If they are == we have zero valid log
+       * entries, and n-1 free log entries */
+       this->m_free_log_entries = this->m_total_log_entries - (m_first_free_entry - m_first_valid_entry) -1;
+     }
+     m_cache_state->clean = this->m_dirty_log_entries.empty();
+     m_cache_state->empty = m_log_entries.empty();
+  }
+}
+
 /*
  * Write and persist the (already allocated) write log entries and
  * data buffer allocations for a set of ops. The data buffer for each
@@ -371,7 +466,7 @@ bool SSDWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
             if ((*it)->log_entry_index < control_block_pos) {
               ceph_assert((*it)->log_entry_index ==
                 (control_block_pos + data_length + MIN_WRITE_ALLOC_SIZE)
-                % m_log_pool_config_size + DATA_RING_BUFFER_OFFSET);
+                % this->m_log_pool_config_size + DATA_RING_BUFFER_OFFSET);
             } else {
               ceph_assert((*it)->log_entry_index == control_block_pos + data_length + MIN_WRITE_ALLOC_SIZE);
             }
@@ -422,8 +517,8 @@ bool SSDWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
     } else {
       first_valid_entry = entry->log_entry_index + MIN_WRITE_ALLOC_SIZE;
     }
-    if (first_valid_entry >= m_log_pool_config_size) {
-        first_valid_entry = first_valid_entry % m_log_pool_config_size + DATA_RING_BUFFER_OFFSET;
+    if (first_valid_entry >= this->m_log_pool_config_size) {
+        first_valid_entry = first_valid_entry % this->m_log_pool_config_size + DATA_RING_BUFFER_OFFSET;
     }
     ceph_assert(first_valid_entry != initial_first_valid_entry);
     auto new_root = std::make_shared<WriteLogPoolRoot>(pool_root);
@@ -455,8 +550,8 @@ bool SSDWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
             m_first_valid_entry = first_valid_entry;
             ceph_assert(m_first_valid_entry % MIN_WRITE_ALLOC_SIZE == 0);
             this->m_free_log_entries += retiring_entries.size();
-            ceph_assert(m_bytes_cached >= cached_bytes);
-            m_bytes_cached -= cached_bytes;
+            ceph_assert(this->m_bytes_cached >= cached_bytes);
+            this->m_bytes_cached -= cached_bytes;
 
             ldout(m_image_ctx.cct, 20) << "Finished root update: "
 	                               << "initial_first_valid_entry=" << initial_first_valid_entry << ", "
@@ -464,7 +559,7 @@ bool SSDWriteLog<I>::retire_entries(const unsigned long int frees_per_tx) {
                                        << "release space = " << allocated_bytes << ","
                                        << "m_bytes_allocated=" << m_bytes_allocated << ","
                                        << "release cached space=" << allocated_bytes << ","
-                                       << "m_bytes_cached=" << m_bytes_cached << dendl;
+                                       << "m_bytes_cached=" << this->m_bytes_cached << dendl;
 
 
             this->m_alloc_failed_since_retire = false;
