@@ -63,6 +63,7 @@ private:
   uint64_t m_log_pool_ring_buffer_size; /* Size of ring buffer */
   std::atomic<int> m_async_update_superblock = {0};
 
+  void load_existing_entries(rwl::DeferredContexts &later);
   void alloc_op_log_entries(rwl::GenericLogOperations &ops);
   int append_op_log_entries(rwl::GenericLogOperations &ops);
   bool retire_entries(const unsigned long int frees_per_tx);

@@ -310,11 +310,84 @@ void ReplicatedWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredCon
     }
     size_t effective_pool_size = (size_t)(this->m_log_pool_config_size * USABLE_SIZE);
     this->m_bytes_allocated_cap = effective_pool_size;
-    this->load_existing_entries(later);
+    load_existing_entries(later);
     m_cache_state->clean = this->m_dirty_log_entries.empty();
     m_cache_state->empty = m_log_entries.empty();
   }
 }
+
+/*
+ * Loads the log entries from an existing log.
+ *
+ * Creates the in-memory structures to represent the state of the
+ * re-opened log.
+ *
+ * Finds the last appended sync point, and any sync points referred to
+ * in log entries, but missing from the log. These missing sync points
+ * are created and scheduled for append. Some rudimentary consistency
+ * checking is done.
+ *    
+ * Rebuilds the m_blocks_to_log_entries map, to make log entries
+ * readable.
+ *  
+ * Places all writes on the dirty entries list, which causes them all
+ * to be flushed.
+ *  
+ */ 
+
+template <typename I>
+void ReplicatedWriteLog<I>::load_existing_entries(DeferredContexts &later) {
+  TOID(struct WriteLogPoolRoot) pool_root;
+  pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
+  struct WriteLogPmemEntry *pmem_log_entries = D_RW(D_RW(pool_root)->log_entries);
+  uint64_t entry_index = m_first_valid_entry;
+  /* The map below allows us to find sync point log entries by sync
+   * gen number, which is necessary so write entries can be linked to
+   * their sync points. */
+  std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> sync_point_entries;
+  /* The map below tracks sync points referred to in writes but not
+   * appearing in the sync_point_entries map.  We'll use this to
+   * determine which sync points are missing and need to be
+   * created. */
+  std::map<uint64_t, bool> missing_sync_points;
+
+  /*
+   * Read the existing log entries. Construct an in-memory log entry
+   * object of the appropriate type for each. Add these to the global
+   * log entries list.
+   *
+   * Write entries will not link to their sync points yet. We'll do
+   * that in the next pass. Here we'll accumulate a map of sync point
+   * gen numbers that are referred to in writes but do not appearing in
+   * the log.
+   */
+  while (entry_index != m_first_free_entry) {
+    WriteLogPmemEntry *pmem_entry = &pmem_log_entries[entry_index];
+    std::shared_ptr<GenericLogEntry> log_entry = nullptr;
+    ceph_assert(pmem_entry->entry_index == entry_index);
+
+    this->update_entries(log_entry, pmem_entry, missing_sync_points,
+        sync_point_entries, entry_index);
+
+    log_entry->ram_entry = *pmem_entry;
+    log_entry->pmem_entry = pmem_entry;
+    log_entry->log_entry_index = entry_index;
+    log_entry->completed = true;
+    
+    m_log_entries.push_back(log_entry);
+    
+    entry_index = (entry_index + 1) % this->m_total_log_entries;
+  }
+
+  this->update_sync_points(missing_sync_points, sync_point_entries, later);
+}
+
+template <typename I>
+void ReplicatedWriteLog<I>::write_data_to_buffer(std::shared_ptr<WriteLogEntry> ws_entry,
+    WriteLogPmemEntry *pmem_entry) {
+  ws_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+}
+
 /**
  * Retire up to MAX_ALLOC_PER_TRANSACTION of the oldest log entries
  * that are eligible to be retired. Returns true if anything was

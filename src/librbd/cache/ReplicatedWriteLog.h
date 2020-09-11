@@ -73,7 +73,10 @@ private:
         const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
   void get_pool_name(const std::string log_poolset_name) override;
   void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) override;
+  void write_data_to_buffer(std::shared_ptr<rwl::WriteLogEntry> ws_entry,
+      rwl::WriteLogPmemEntry *pmem_entry) override;
 
+  void load_existing_entries(rwl::DeferredContexts &later);
   void alloc_op_log_entries(rwl::GenericLogOperations &ops);
   int append_op_log_entries(rwl::GenericLogOperations &ops);
   void flush_then_append_scheduled_ops(void);

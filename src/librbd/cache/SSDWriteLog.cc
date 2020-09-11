@@ -214,13 +214,13 @@ void SSDWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &
     new_root->num_log_entries = num_small_writes;
     pool_root = *new_root;
 
-    int r = update_pool_root_sync(new_root);
+    r = update_pool_root_sync(new_root);
     if (r != 0) {
       this->m_total_log_entries = 0;
       this->m_free_log_entries = 0;
       lderr(m_image_ctx.cct) << "failed to initialize pool ("
                              << this->m_log_pool_name << ")" << dendl;
-      on_finish->complete(r1);
+      on_finish->complete(r);
     }
     this->m_total_log_entries = new_root->num_log_entries;
     this->m_free_log_entries = new_root->num_log_entries - 1;
@@ -228,23 +228,23 @@ void SSDWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &
      m_cache_state->present = true;
      bdev = BlockDevice::create(cct, this->m_log_pool_name, aio_cache_cb,
          static_cast<void*>(this), nullptr, static_cast<void*>(this));
-     r = bdev->open(this->m_log_pool_name);
+     int r = bdev->open(this->m_log_pool_name);
      if (r < 0) {
        delete bdev;
        on_finish->complete(-1);
        return;
      }
-     this->load_existing_entries(later);
+     load_existing_entries(later);
      if (m_first_free_entry < m_first_valid_entry) {
       /* Valid entries wrap around the end of the ring, so first_free is lower
        * than first_valid.  If first_valid was == first_free+1, the entry at
        * first_free would be empty. The last entry is never used, so in
        * that case there would be zero free log entries. */
-       this->m_free_log_entries = this->m_total_log_entries - (m_first_valid_entry - m_first_free_entry) -1;
+       this->m_free_log_entries = this->m_total_log_entries - (m_first_valid_entry - m_first_free_entry) - 1;
      } else {
       /* first_valid is <= first_free. If they are == we have zero valid log
        * entries, and n-1 free log entries */
-       this->m_free_log_entries = this->m_total_log_entries - (m_first_free_entry - m_first_valid_entry) -1;
+       this->m_free_log_entries = this->m_total_log_entries - (m_first_free_entry - m_first_valid_entry) - 1;
      }
      m_cache_state->clean = this->m_dirty_log_entries.empty();
      m_cache_state->empty = m_log_entries.empty();
@@ -325,6 +325,11 @@ int SSDWriteLog<I>::append_op_log_entries(GenericLogOperations &ops) {
 template <typename I>
 void SSDWriteLog<I>::release_ram(std::shared_ptr<GenericLogEntry> log_entry) {
   log_entry->remove_pmem_bl();
+}
+
+template <typename I>
+void SSDWriteLog<I>::load_existing_entries(rwl::DeferredContexts &later) {
+  //TODO
 }
 
 template <typename I>

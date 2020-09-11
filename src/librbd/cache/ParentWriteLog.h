@@ -15,6 +15,7 @@
 #include "librbd/cache/rwl/LogOperation.h"
 #include "librbd/cache/rwl/Request.h"
 #include "librbd/cache/rwl/LogMap.h"
+#include "librbd/cache/rwl/Types.h"
 #include <functional>
 #include <list>
 
@@ -33,6 +34,7 @@ class SyncPointLogEntry;
 class GenericWriteLogEntry;
 class WriteLogEntry;
 class GenericLogEntry;
+struct WriteLogPmemEntry;
 
 typedef std::list<std::shared_ptr<WriteLogEntry>> WriteLogEntries;
 typedef std::list<std::shared_ptr<GenericLogEntry>> GenericLogEntries;
@@ -279,9 +281,15 @@ protected:
 
   void rwl_init(Context *on_finish, rwl::DeferredContexts &later);
   void update_image_cache_state(Context *on_finish);
-  void load_existing_entries(rwl::DeferredContexts &later);
   void wake_up();
 
+  void update_entries(std::shared_ptr<rwl::GenericLogEntry> log_entry,
+      rwl::WriteLogPmemEntry *pmem_entry, std::map<uint64_t, bool> &missing_sync_points,
+      std::map<uint64_t, std::shared_ptr<rwl::SyncPointLogEntry>> &sync_point_entries,
+      int entry_index);
+  void update_sync_points(std::map<uint64_t, bool> &missing_sync_points,
+      std::map<uint64_t, std::shared_ptr<rwl::SyncPointLogEntry>> &sync_point_entries,
+      rwl::DeferredContexts &later);
   void flush_dirty_entries(Context *on_finish);
   bool can_flush_entry(const std::shared_ptr<rwl::GenericLogEntry> log_entry);
   Context *construct_flush_entry(const std::shared_ptr<rwl::GenericLogEntry> log_entry, bool invalidating);
@@ -296,7 +304,6 @@ protected:
   void flush_new_sync_point_if_needed(C_FlushRequestT *flush_req, rwl::DeferredContexts &later);
 
   void dispatch_deferred_writes(void);
-  virtual void alloc_op_log_entries(rwl::GenericLogOperations &ops) {}
   void alloc_and_dispatch_io_req(C_BlockIORequestT *write_req);
   void enlist_op_appender();
   void complete_op_log_entries(rwl::GenericLogOperations &&ops, const int r);
@@ -313,8 +320,11 @@ protected:
   virtual void append_scheduled_ops(void) = 0;
   virtual void schedule_append_ops(rwl::GenericLogOperations &ops) = 0;
   virtual void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) = 0;
+  virtual void write_data_to_buffer(std::shared_ptr<rwl::WriteLogEntry> ws_entry,
+      rwl::WriteLogPmemEntry *pmem_entry) {};
   virtual void get_pool_name(const std::string log_poolset_name) {}
   virtual void release_ram(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {};
+  virtual void alloc_op_log_entries(rwl::GenericLogOperations &ops) {}
   virtual bool retire_entries(const unsigned long int frees_per_tx) {return false;};
   virtual void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) {}
   virtual void copy_pmem(C_BlockIORequestT *req) {};

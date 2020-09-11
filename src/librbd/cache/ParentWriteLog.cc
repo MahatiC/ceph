@@ -332,56 +332,12 @@ void ParentWriteLog<I>::arm_periodic_stats() {
   }
 }
 
-/*
- * Loads the log entries from an existing log.
- *
- * Creates the in-memory structures to represent the state of the
- * re-opened log.
- *
- * Finds the last appended sync point, and any sync points referred to
- * in log entries, but missing from the log. These missing sync points
- * are created and scheduled for append. Some rudimentary consistency
- * checking is done.
- *
- * Rebuilds the m_blocks_to_log_entries map, to make log entries
- * readable.
- *
- * Places all writes on the dirty entries list, which causes them all
- * to be flushed.
- *
- */
 template <typename I>
-void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
-  TOID(struct WriteLogPoolRoot) pool_root;
-  pool_root = POBJ_ROOT(m_log_pool, struct WriteLogPoolRoot);
-  struct WriteLogPmemEntry *pmem_log_entries = D_RW(D_RW(pool_root)->log_entries);
-  uint64_t entry_index = m_first_valid_entry;
-  /* The map below allows us to find sync point log entries by sync
-   * gen number, which is necessary so write entries can be linked to
-   * their sync points. */
-  std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> sync_point_entries;
-  /* The map below tracks sync points referred to in writes but not
-   * appearing in the sync_point_entries map.  We'll use this to
-   * determine which sync points are missing and need to be
-   * created. */
-  std::map<uint64_t, bool> missing_sync_points;
-
-  /*
-   * Read the existing log entries. Construct an in-memory log entry
-   * object of the appropriate type for each. Add these to the global
-   * log entries list.
-   *
-   * Write entries will not link to their sync points yet. We'll do
-   * that in the next pass. Here we'll accumulate a map of sync point
-   * gen numbers that are referred to in writes but do not appearing in
-   * the log.
-   */
-  while (entry_index != m_first_free_entry) {
-    WriteLogPmemEntry *pmem_entry = &pmem_log_entries[entry_index];
-    std::shared_ptr<GenericLogEntry> log_entry = nullptr;
+void ParentWriteLog<I>::update_entries(std::shared_ptr<GenericLogEntry> log_entry,
+    WriteLogPmemEntry *pmem_entry, std::map<uint64_t, bool> &missing_sync_points,
+    std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> &sync_point_entries,
+    int entry_index) {
     bool writer = pmem_entry->is_writer();
-
-    ceph_assert(pmem_entry->entry_index == entry_index);
     if (pmem_entry->is_sync_point()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
                                  << " is a sync point. pmem_entry=[" << *pmem_entry << "]" << dendl;
@@ -395,7 +351,7 @@ void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
                                  << " is a write. pmem_entry=[" << *pmem_entry << "]" << dendl;
       auto write_entry =
         std::make_shared<WriteLogEntry>(nullptr, pmem_entry->image_offset_bytes, pmem_entry->write_bytes);
-      write_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+      write_data_to_buffer(write_entry, pmem_entry);
       log_entry = write_entry;
     } else if (pmem_entry->is_writesame()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
@@ -403,7 +359,7 @@ void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       auto ws_entry =
         std::make_shared<WriteSameLogEntry>(nullptr, pmem_entry->image_offset_bytes,
                                             pmem_entry->write_bytes, pmem_entry->ws_datalen);
-      ws_entry->pmem_buffer = D_RW(pmem_entry->write_data);
+      write_data_to_buffer(ws_entry, pmem_entry);
       log_entry = ws_entry;
     } else if (pmem_entry->is_discard()) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
@@ -416,7 +372,7 @@ void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
       lderr(m_image_ctx.cct) << "Unexpected entry type in entry " << entry_index
                              << ", pmem_entry=[" << *pmem_entry << "]" << dendl;
     }
-
+    
     if (writer) {
       ldout(m_image_ctx.cct, 20) << "Entry " << entry_index
                                  << " writes. pmem_entry=[" << *pmem_entry << "]" << dendl;
@@ -424,17 +380,12 @@ void ParentWriteLog<I>::load_existing_entries(DeferredContexts &later) {
         missing_sync_points[pmem_entry->sync_gen_number] = true;
       }
     }
+}
 
-    log_entry->ram_entry = *pmem_entry;
-    log_entry->pmem_entry = pmem_entry;
-    log_entry->log_entry_index = entry_index;
-    log_entry->completed = true;
-
-    m_log_entries.push_back(log_entry);
-
-    entry_index = (entry_index + 1) % m_total_log_entries;
-  }
-
+template <typename I>
+void ParentWriteLog<I>::update_sync_points(std::map<uint64_t, bool> &missing_sync_points,
+    std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> &sync_point_entries,
+    DeferredContexts &later) {
   /* Create missing sync points. These must not be appended until the
    * entry reload is complete and the write map is up to
    * date. Currently this is handled by the deferred contexts object
