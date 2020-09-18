@@ -72,6 +72,7 @@ private:
   Context *construct_flush_entry_ctx(
         const std::shared_ptr<rwl::GenericLogEntry> log_entry) override;
   void get_pool_name(const std::string log_poolset_name) override;
+  void remove_pool_file();
   void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) override;
   void write_data_to_buffer(std::shared_ptr<rwl::WriteLogEntry> ws_entry,
       rwl::WriteLogPmemEntry *pmem_entry) override;

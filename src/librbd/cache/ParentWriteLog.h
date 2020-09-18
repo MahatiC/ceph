@@ -319,15 +319,16 @@ protected:
   virtual void process_work() = 0;
   virtual void append_scheduled_ops(void) = 0;
   virtual void schedule_append_ops(rwl::GenericLogOperations &ops) = 0;
+  virtual void remove_pool_file() = 0;
   virtual void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) = 0;
   virtual void write_data_to_buffer(std::shared_ptr<rwl::WriteLogEntry> ws_entry,
-      rwl::WriteLogPmemEntry *pmem_entry) {};
+      rwl::WriteLogPmemEntry *pmem_entry) {}
   virtual void get_pool_name(const std::string log_poolset_name) {}
-  virtual void release_ram(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {};
+  virtual void release_ram(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {}
   virtual void alloc_op_log_entries(rwl::GenericLogOperations &ops) {}
-  virtual bool retire_entries(const unsigned long int frees_per_tx) {return false;};
+  virtual bool retire_entries(const unsigned long int frees_per_tx) {return false;}
   virtual void schedule_flush_and_append(rwl::GenericLogOperationsVector &ops) {}
-  virtual void copy_pmem(C_BlockIORequestT *req) {};
+  virtual void copy_pmem(C_BlockIORequestT *req) {}
   virtual void persist_last_flushed_sync_gen() {}
   virtual void reserve_pmem(C_BlockIORequestT *req, bool &alloc_succeeds, bool &no_space) {}
   virtual Context *construct_flush_entry_ctx(const std::shared_ptr<rwl::GenericLogEntry> log_entry) {return nullptr;}

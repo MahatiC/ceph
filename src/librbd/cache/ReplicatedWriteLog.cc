@@ -203,6 +203,35 @@ void ReplicatedWriteLog<I>::get_pool_name(const std::string log_poolset_name) {
 }
 
 template <typename I>
+void ReplicatedWriteLog<I>::remove_pool_file() {
+  if (m_log_pool) {
+    ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
+    pmemobj_close(m_log_pool);
+  }
+  if (m_cache_state->clean) {
+    if (this->m_log_is_poolset) {
+      ldout(m_image_ctx.cct, 5) << "Not removing poolset " << this->m_log_pool_name << dendl;
+    } else {
+      ldout(m_image_ctx.cct, 5) << "Removing empty pool file: " << this->m_log_pool_name << dendl;
+      if (remove(this->m_log_pool_name.c_str()) != 0) {
+        lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << this->m_log_pool_name << "\": "
+          << pmemobj_errormsg() << dendl;
+      } else {
+        m_cache_state->clean = true;
+        m_cache_state->empty = true;
+        m_cache_state->present = false;
+      }
+    }
+  } else {
+    if (this->m_log_is_poolset) {
+      ldout(m_image_ctx.cct, 5) << "Not removing poolset " << this->m_log_pool_name << dendl;
+    } else {
+      ldout(m_image_ctx.cct, 5) << "Not removing pool file: " << this->m_log_pool_name << dendl;
+    }
+  }
+}
+
+template <typename I>
 void ReplicatedWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   TOID(struct WriteLogPoolRoot) pool_root;

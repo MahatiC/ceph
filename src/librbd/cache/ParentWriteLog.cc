@@ -605,31 +605,9 @@ void ParentWriteLog<I>::shut_down(Context *on_finish) {
         m_wake_up_enabled = false;
         m_cache_state->clean = true;
         m_log_entries.clear();
-        if (m_log_pool) {
-          ldout(m_image_ctx.cct, 6) << "closing pmem pool" << dendl;
-          pmemobj_close(m_log_pool);
-        }
-        if (m_cache_state->clean) {
-          if (m_log_is_poolset) {
-            ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
-          } else {
-            ldout(m_image_ctx.cct, 5) << "Removing empty pool file: " << m_log_pool_name << dendl;
-            if (remove(m_log_pool_name.c_str()) != 0) {
-              lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << m_log_pool_name << "\": "
-                                     << pmemobj_errormsg() << dendl;
-            } else {
-              m_cache_state->clean = true;
-              m_cache_state->empty = true;
-              m_cache_state->present = false;
-            }
-          }
-        } else {
-          if (m_log_is_poolset) {
-            ldout(m_image_ctx.cct, 5) << "Not removing poolset " << m_log_pool_name << dendl;
-          } else {
-            ldout(m_image_ctx.cct, 5) << "Not removing pool file: " << m_log_pool_name << dendl;
-          }
-        }
+
+        remove_pool_file();
+
         if (m_perfcounter) {
           perf_stop();
         }

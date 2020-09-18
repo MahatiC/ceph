@@ -251,6 +251,29 @@ void SSDWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &
   }
 }
 
+template <typename I>
+void SSDWriteLog<I>::remove_pool_file() {
+  ceph_assert(bdev);
+  bdev->close();
+  delete bdev;
+  bdev = nullptr;
+  ldout(m_image_ctx.cct, 5) << "block device is closed" << dendl;
+
+  if (m_cache_state->clean) {
+    ldout(m_image_ctx.cct, 5) << "Removing empty pool file: " << this->m_log_pool_name << dendl;
+    if (remove(this->m_log_pool_name.c_str()) != 0) {
+      lderr(m_image_ctx.cct) << "failed to remove empty pool \"" << this->m_log_pool_name << "\": "
+        << dendl;
+    } else {
+      m_cache_state->clean = true;
+      m_cache_state->empty = true;
+      m_cache_state->present = false;
+    }
+  } else {
+    ldout(m_image_ctx.cct, 5) << "Not removing pool file: " << this->m_log_pool_name << dendl;
+  }
+}
+
 /*
  * Write and persist the (already allocated) write log entries and
  * data buffer allocations for a set of ops. The data buffer for each
@@ -329,7 +352,66 @@ void SSDWriteLog<I>::release_ram(std::shared_ptr<GenericLogEntry> log_entry) {
 
 template <typename I>
 void SSDWriteLog<I>::load_existing_entries(rwl::DeferredContexts &later) {
-  //TODO
+  bufferlist bl;
+  CephContext *cct = m_image_ctx.cct;
+  ::IOContext ioctx(cct, nullptr);
+  read_with_pos(0, MIN_WRITE_ALLOC_SIZE, &bl, &ioctx);
+  super_block_t superblock;
+
+  auto p = bl.cbegin();
+  decode(superblock, p);
+  ldout(cct,5) << "Decoded superblock" << dendl;
+
+  WriteLogPoolRoot current_pool_root = superblock.root;
+  uint64_t next_log_pos = pool_root.first_valid_entry;
+  uint64_t first_free_entry =  pool_root.first_free_entry;
+  uint64_t curr_log_pos;
+
+  pool_root = current_pool_root;
+  m_first_free_entry = first_free_entry;
+  m_first_valid_entry = next_log_pos;
+  this->m_total_log_entries = current_pool_root.num_log_entries;
+  this->m_flushed_sync_gen = current_pool_root.flushed_sync_gen;
+  this->m_log_pool_actual_size = current_pool_root.pool_size;
+
+  std::map<uint64_t, std::shared_ptr<SyncPointLogEntry>> sync_point_entries;
+
+  std::map<uint64_t, bool> missing_sync_points;
+
+  //m_bytes_allocated = m_first_free_entry - m_first_valid_entry;
+
+  // Iterate through the log_entries and append all the write_bytes
+  // of each entry to fetch the pos of next 4k of log_entries. Iterate
+  // through the log entries and append them to the in-memory vector
+  while (next_log_pos != first_free_entry) {
+    // read the entries from SSD cache and decode
+    bufferlist bl_entries;
+    ::IOContext ioctx_entry(cct, nullptr);
+    read_with_pos(next_log_pos, MIN_WRITE_ALLOC_SIZE, &bl_entries, &ioctx_entry);
+    std::vector<WriteLogPmemEntry> ssd_log_entries;
+    auto pl = bl_entries.cbegin();
+    decode(ssd_log_entries, pl);
+    ldout(cct,5) << "Decoded ssd log entries" << dendl;
+    if (next_log_pos >= this->m_log_pool_actual_size ) {
+      next_log_pos = next_log_pos % this->m_log_pool_actual_size + DATA_RING_BUFFER_OFFSET;
+    }
+    curr_log_pos = next_log_pos;
+    std::shared_ptr<GenericLogEntry> log_entry = nullptr;
+    for(auto it = ssd_log_entries.begin(); it != ssd_log_entries.end(); ++it) {
+      this->update_entries(log_entry, &*it, missing_sync_points,
+          sync_point_entries, next_log_pos);
+
+      log_entry->ram_entry = *it;
+      log_entry->log_entry_index = curr_log_pos;
+      log_entry->completed = true;
+      m_log_entries.push_back(log_entry);
+      next_log_pos += round_up_to(it->write_bytes, MIN_WRITE_ALLOC_SIZE);
+    }
+    // along with the write_bytes, add control block size too
+    next_log_pos += MIN_WRITE_ALLOC_SIZE;
+  }
+
+  this->update_sync_points(missing_sync_points, sync_point_entries, later);
 }
 
 template <typename I>

@@ -74,6 +74,7 @@ private:
   void schedule_append_ops(rwl::GenericLogOperations &ops) override;
   void append_scheduled_ops(void) override;
   void initialize_pool(Context *on_finish, rwl::DeferredContexts &later) override;
+  void remove_pool_file() override;
   void setup_schedule_append(rwl::GenericLogOperationsVector &ops,
                              bool do_early_flush) override;
   Context *construct_flush_entry_ctx(
