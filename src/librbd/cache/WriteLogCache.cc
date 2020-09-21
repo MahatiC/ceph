@@ -13,15 +13,15 @@
 #include "common/Timer.h"
 #include "common/perf_counters.h"
 #include "librbd/ImageCtx.h"
-#include "ReplicatedWriteLog.h"
-#include "SSDWriteLog.h"
-#include "librbd/cache/rwl/ImageCacheState.h"
-#include "librbd/cache/rwl/LogEntry.h"
+#include "librbd/cache/pwl/ReplicatedWriteLog.h"
+#include "librbd/cache/pwl/SSDWriteLog.h"
+#include "librbd/cache/pwl/ImageCacheState.h"
+#include "librbd/cache/pwl/LogEntry.h"
 #include <map>
 #include <vector>
 
 #undef dout_subsys
-#define dout_subsys ceph_subsys_rbd_rwl
+#define dout_subsys ceph_subsys_rbd_pwl
 #undef dout_prefix
 #define dout_prefix *_dout << "librbd::cache::WriteLogCache: " << this << " " \
                            <<  __func__ << ": "
@@ -29,18 +29,18 @@
 namespace librbd {
 namespace cache {
 
-using namespace librbd::cache::rwl;
+using namespace librbd::cache::pwl;
 
 typedef WriteLogCache<ImageCtx>::Extent Extent;
 typedef WriteLogCache<ImageCtx>::Extents Extents;
 
 template <typename I>
-WriteLogCache<I>::WriteLogCache(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state,
+WriteLogCache<I>::WriteLogCache(I &image_ctx, librbd::cache::pwl::ImageCacheState<I>* cache_state,
                                bool ssd_writelog) {
   if (ssd_writelog) {
-    m_write_log = new SSDWriteLog<I>(image_ctx, cache_state);
+    m_write_log = new librbd::cache::pwl::SSDWriteLog<I>(image_ctx, cache_state);
   } else {
-    m_write_log = new ReplicatedWriteLog<I>(image_ctx, cache_state);
+    m_write_log = new librbd::cache::pwl::ReplicatedWriteLog<I>(image_ctx, cache_state);
   }
 }
 

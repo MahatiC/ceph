@@ -6,14 +6,14 @@
 
 #include "include/Context.h"
 #include "librbd/cache/ImageCache.h"
-#include "librbd/cache/rwl/Types.h"
-#include "librbd/cache/rwl/LogOperation.h"
+#include "librbd/cache/pwl/Types.h"
+#include "librbd/cache/pwl/LogOperation.h"
 
 namespace librbd {
 class BlockGuardCell;
 
 namespace cache {
-namespace rwl {
+namespace pwl {
 
 class GuardedRequestFunctionContext;
 
@@ -33,7 +33,7 @@ struct WriteRequestResources {
 template <typename T>
 class C_BlockIORequest : public Context {
 public:
-  T &rwl;
+  T &pwl;
   io::Extents image_extents;
   bufferlist bl;
   int fadvise_flags;
@@ -45,7 +45,7 @@ public:
   bool waited_entries = false;          /* This IO waited for free log entries */
   bool waited_buffers = false;          /* This IO waited for data buffers (pmemobj_reserve() failed) */
 
-  C_BlockIORequest(T &rwl, const utime_t arrived, io::Extents &&extents,
+  C_BlockIORequest(T &pwl, const utime_t arrived, io::Extents &&extents,
                    bufferlist&& bl, const int fadvise_flags, Context *user_req, bool ssd_writelog);
   ~C_BlockIORequest() override;
   C_BlockIORequest(const C_BlockIORequest&) = delete;
@@ -132,10 +132,10 @@ private:
 template <typename T>
 class C_WriteRequest : public C_BlockIORequest<T> {
 public:
-  using C_BlockIORequest<T>::rwl;
+  using C_BlockIORequest<T>::pwl;
   unique_ptr<WriteLogOperationSet> op_set = nullptr;
 
-  C_WriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
+  C_WriteRequest(T &pwl, const utime_t arrived, io::Extents &&image_extents,
                  bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
                  PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
@@ -199,11 +199,11 @@ private:
 template <typename T>
 class C_FlushRequest : public C_BlockIORequest<T> {
 public:
-  using C_BlockIORequest<T>::rwl;
+  using C_BlockIORequest<T>::pwl;
   bool internal = false;
   std::shared_ptr<SyncPoint> to_append;
 
-  C_FlushRequest(T &rwl, const utime_t arrived,
+  C_FlushRequest(T &pwl, const utime_t arrived,
                  io::Extents &&image_extents,
                  bufferlist&& bl, const int fadvise_flags,
                  ceph::mutex &lock, PerfCounters *perfcounter,
@@ -230,7 +230,7 @@ private:
 
   void finish_req(int r) override;
   void deferred_handler() override {
-    m_perfcounter->inc(l_librbd_rwl_aio_flush_def, 1);
+    m_perfcounter->inc(l_librbd_pwl_aio_flush_def, 1);
   }
 
   template <typename U>
@@ -246,10 +246,10 @@ private:
 template <typename T>
 class C_DiscardRequest : public C_BlockIORequest<T> {
 public:
-  using C_BlockIORequest<T>::rwl;
+  using C_BlockIORequest<T>::pwl;
   std::shared_ptr<DiscardLogOperation> op;
 
-  C_DiscardRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
+  C_DiscardRequest(T &pwl, const utime_t arrived, io::Extents &&image_extents,
                    uint32_t discard_granularity_bytes, ceph::mutex &lock,
                    PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
@@ -291,8 +291,8 @@ private:
 template <typename T>
 class C_WriteSameRequest : public C_WriteRequest<T> {
 public:
-  using C_BlockIORequest<T>::rwl;
-  C_WriteSameRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
+  using C_BlockIORequest<T>::pwl;
+  C_WriteSameRequest(T &pwl, const utime_t arrived, io::Extents &&image_extents,
                      bufferlist&& bl, const int fadvise_flags, ceph::mutex &lock,
                      PerfCounters *perfcounter, Context *user_req, bool ssd_writelog);
 
@@ -325,12 +325,12 @@ public:
 template <typename T>
 class C_CompAndWriteRequest : public C_WriteRequest<T> {
 public:
-  using C_BlockIORequest<T>::rwl;
+  using C_BlockIORequest<T>::pwl;
   bool compare_succeeded = false;
   uint64_t *mismatch_offset;
   bufferlist cmp_bl;
   bufferlist read_bl;
-  C_CompAndWriteRequest(T &rwl, const utime_t arrived, io::Extents &&image_extents,
+  C_CompAndWriteRequest(T &pwl, const utime_t arrived, io::Extents &&image_extents,
                         bufferlist&& cmp_bl, bufferlist&& bl, uint64_t *mismatch_offset,
                         int fadvise_flags, ceph::mutex &lock, PerfCounters *perfcounter,
                         Context *user_req, bool ssd_writelog);
@@ -406,7 +406,7 @@ public:
   }
 };
 
-} // namespace rwl
+} // namespace pwl
 } // namespace cache
 } // namespace librbd
 

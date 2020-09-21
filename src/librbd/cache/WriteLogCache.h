@@ -5,7 +5,7 @@
 #define CEPH_LIBRBD_CACHE_WRITE_LOG_CACHE
 
 #include "librbd/cache/ImageCache.h"
-#include "ParentWriteLog.h"
+#include "librbd/cache/pwl/AbstractWriteLog.h"
 
 class Context;
 class SafeTimer;
@@ -25,7 +25,7 @@ public:
   using typename ImageCache<ImageCtxT>::Extent;
   using typename ImageCache<ImageCtxT>::Extents;
 
-  WriteLogCache(ImageCtxT &image_ctx, librbd::cache::rwl::ImageCacheState<ImageCtxT>* cache_state,
+  WriteLogCache(ImageCtxT &image_ctx, librbd::cache::pwl::ImageCacheState<ImageCtxT>* cache_state,
                 bool ssd_writelog=false);
   ~WriteLogCache();
   WriteLogCache(const WriteLogCache&) = delete;
@@ -54,7 +54,7 @@ public:
   void invalidate(Context *on_finish) override;
   void flush(Context *on_finish) override;
 
-  ParentWriteLog<ImageCtxT> *m_write_log;
+  AbstractWriteLog<ImageCtxT> *m_write_log;
 };
 
 } // namespace cache

@@ -15,28 +15,29 @@
 #include "common/perf_counters.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/asio/ContextWQ.h"
-#include "librbd/cache/rwl/ImageCacheState.h"
-#include "librbd/cache/rwl/LogEntry.h"
-#include "librbd/cache/rwl/Types.h"
+#include "librbd/cache/pwl/ImageCacheState.h"
+#include "librbd/cache/pwl/LogEntry.h"
+#include "librbd/cache/pwl/Types.h"
 #include <map>
 #include <vector>
 
 #undef dout_subsys
-#define dout_subsys ceph_subsys_rbd_rwl
+#define dout_subsys ceph_subsys_rbd_pwl
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::cache::ReplicatedWriteLog: " << this << " " \
+#define dout_prefix *_dout << "librbd::cache::pwl::ReplicatedWriteLog: " << this << " " \
                            <<  __func__ << ": "
 
 namespace librbd {
 namespace cache {
+namespace pwl {
 
-using namespace librbd::cache::rwl;
+using namespace librbd::cache::pwl;
 
 const unsigned long int OPS_APPENDED_TOGETHER = MAX_ALLOC_PER_TRANSACTION;
 
 template <typename I>
-ReplicatedWriteLog<I>::ReplicatedWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
-  : ParentWriteLog<I>(image_ctx, cache_state, false)
+ReplicatedWriteLog<I>::ReplicatedWriteLog(I &image_ctx, librbd::cache::pwl::ImageCacheState<I>* cache_state)
+  : AbstractWriteLog<I>(image_ctx, cache_state, false)
 {
 }
 
@@ -153,9 +154,9 @@ int ReplicatedWriteLog<I>::append_op_log_entries(GenericLogOperations &ops)
   } TX_END;
 
   utime_t tx_end = ceph_clock_now();
-  m_perfcounter->tinc(l_librbd_rwl_append_tx_t, tx_end - tx_start);
+  m_perfcounter->tinc(l_librbd_pwl_append_tx_t, tx_end - tx_start);
   m_perfcounter->hinc(
-    l_librbd_rwl_append_tx_t_hist, utime_t(tx_end - tx_start).to_nsec(), ops.size());
+    l_librbd_pwl_append_tx_t_hist, utime_t(tx_end - tx_start).to_nsec(), ops.size());
   for (auto &operation : ops) {
     operation->log_append_comp_time = tx_end;
   }
@@ -232,14 +233,14 @@ void ReplicatedWriteLog<I>::remove_pool_file() {
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &later) {
+void ReplicatedWriteLog<I>::initialize_pool(Context *on_finish, pwl::DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   TOID(struct WriteLogPoolRoot) pool_root;
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
   if (access(this->m_log_pool_name.c_str(), F_OK) != 0) {
     if ((m_log_pool =
          pmemobj_create(this->m_log_pool_name.c_str(),
-                        this->m_rwl_pool_layout_name,
+                        this->m_pwl_pool_layout_name,
                         this->m_log_pool_config_size,
                         (S_IWUSR | S_IRUSR))) == NULL) {
       lderr(cct) << "failed to create pool (" << this->m_log_pool_name << ")"
@@ -301,7 +302,7 @@ void ReplicatedWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredCon
     /* Open existing pool */
     if ((m_log_pool =
          pmemobj_open(this->m_log_pool_name.c_str(),
-                      this->m_rwl_pool_layout_name)) == NULL) {
+                      this->m_pwl_pool_layout_name)) == NULL) {
       lderr(cct) << "failed to open pool (" << this->m_log_pool_name << "): "
                  << pmemobj_errormsg() << dendl;
       on_finish->complete(-errno);
@@ -503,8 +504,8 @@ bool ReplicatedWriteLog<I>::retire_entries(const unsigned long int frees_per_tx)
       } TX_END;
       tx_end = ceph_clock_now();
     }
-    m_perfcounter->tinc(l_librbd_rwl_retire_tx_t, tx_end - tx_start);
-    m_perfcounter->hinc(l_librbd_rwl_retire_tx_t_hist, utime_t(tx_end - tx_start).to_nsec(), retiring_entries.size());
+    m_perfcounter->tinc(l_librbd_pwl_retire_tx_t, tx_end - tx_start);
+    m_perfcounter->hinc(l_librbd_pwl_retire_tx_t_hist, utime_t(tx_end - tx_start).to_nsec(), retiring_entries.size());
 
     /* Update runtime copy of first_valid, and free entries counts */
     {
@@ -643,7 +644,7 @@ void ReplicatedWriteLog<I>::enlist_op_flusher()
 }
 
 template <typename I>
-void ReplicatedWriteLog<I>::setup_schedule_append(rwl::GenericLogOperationsVector &ops,
+void ReplicatedWriteLog<I>::setup_schedule_append(pwl::GenericLogOperationsVector &ops,
                                                   bool do_early_flush) {
   if (do_early_flush) {
     /* This caller is waiting for persist, so we'll use their thread to
@@ -899,7 +900,8 @@ bool ReplicatedWriteLog<I>::alloc_resources(C_BlockIORequestT *req) {
   return alloc_succeeds;
 }
 
+} // namespace pwl
 } // namespace cache
 } // namespace librbd
 
-template class librbd::cache::ReplicatedWriteLog<librbd::ImageCtx>;
+template class librbd::cache::pwl::ReplicatedWriteLog<librbd::ImageCtx>;

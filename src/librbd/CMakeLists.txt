@@ -43,8 +43,8 @@ set(librbd_internal_srcs
   cache/ObjectCacherObjectDispatch.cc
   cache/ObjectCacherWriteback.cc
   cache/PassthroughImageCache.cc
-  cache/rwl/InitRequest.cc
-  cache/rwl/ShutdownRequest.cc
+  cache/pwl/InitRequest.cc
+  cache/pwl/ShutdownRequest.cc
   cache/WriteAroundObjectDispatch.cc
   crypto/CryptoObjectDispatch.cc
   deep_copy/ImageCopyRequest.cc
@@ -196,25 +196,25 @@ endif()
 if(WITH_RBD_RWL OR WITH_RBD_SSD)
   set(librbd_internal_srcs
     ${librbd_internal_srcs}
-    cache/rwl/Types.cc
-    cache/rwl/ImageCacheState.cc
-    cache/rwl/LogEntry.cc
-    cache/rwl/LogMap.cc
-    cache/rwl/LogOperation.cc
-    cache/rwl/ReadRequest.cc
-    cache/rwl/Request.cc
-    cache/rwl/SyncPoint.cc
-    cache/ParentWriteLog.cc
+    cache/pwl/Types.cc
+    cache/pwl/ImageCacheState.cc
+    cache/pwl/LogEntry.cc
+    cache/pwl/LogMap.cc
+    cache/pwl/LogOperation.cc
+    cache/pwl/ReadRequest.cc
+    cache/pwl/Request.cc
+    cache/pwl/SyncPoint.cc
+    cache/pwl/AbstractWriteLog.cc
     cache/WriteLogCache.cc)
   if(WITH_RBD_RWL)
     set(librbd_internal_srcs
       ${librbd_internal_srcs}
-      cache/ReplicatedWriteLog.cc)
+      cache/pwl/ReplicatedWriteLog.cc)
   endif()
   if(WITH_RBD_SSD)
     set(librbd_internal_srcs
       ${librbd_internal_srcs}
-      cache/SSDWriteLog.cc)
+      cache/pwl/SSDWriteLog.cc)
   endif()
 endif()
 

@@ -14,28 +14,29 @@
 #include "common/perf_counters.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/asio/ContextWQ.h"
-#include "librbd/cache/rwl/ImageCacheState.h"
-#include "librbd/cache/rwl/LogEntry.h"
+#include "librbd/cache/pwl/ImageCacheState.h"
+#include "librbd/cache/pwl/LogEntry.h"
 #include <map>
 #include <vector>
 
 #undef dout_subsys
-#define dout_subsys ceph_subsys_rbd_rwl
+#define dout_subsys ceph_subsys_rbd_pwl
 #undef dout_prefix
-#define dout_prefix *_dout << "librbd::cache::SSDWriteLog: " << this << " " \
+#define dout_prefix *_dout << "librbd::cache::pwl::SSDWriteLog: " << this << " " \
                            <<  __func__ << ": "
 
 namespace librbd {
 namespace cache {
+namespace pwl {
 
-using namespace librbd::cache::rwl;
+using namespace librbd::cache::pwl;
 
 // SSD: this number can be updated later
 const unsigned long int ops_appended_together = MAX_WRITES_PER_SYNC_POINT;
 
 template <typename I>
-SSDWriteLog<I>::SSDWriteLog(I &image_ctx, librbd::cache::rwl::ImageCacheState<I>* cache_state)
-  : ParentWriteLog<I>(image_ctx, cache_state, true)
+SSDWriteLog<I>::SSDWriteLog(I &image_ctx, librbd::cache::pwl::ImageCacheState<I>* cache_state)
+  : AbstractWriteLog<I>(image_ctx, cache_state, true)
 {
 }
 
@@ -136,7 +137,7 @@ void SSDWriteLog<I>::schedule_append_ops(GenericLogOperations &ops) {
 }
 
 template <typename I>
-void SSDWriteLog<I>::setup_schedule_append(rwl::GenericLogOperationsVector &ops,
+void SSDWriteLog<I>::setup_schedule_append(pwl::GenericLogOperationsVector &ops,
                                                   bool do_early_flush) {
   this->schedule_append(ops);
 }
@@ -157,7 +158,7 @@ void SSDWriteLog<I>::append_scheduled_ops(void) {
 }
 
 template <typename I>
-void SSDWriteLog<I>::initialize_pool(Context *on_finish, rwl::DeferredContexts &later) {
+void SSDWriteLog<I>::initialize_pool(Context *on_finish, pwl::DeferredContexts &later) {
   CephContext *cct = m_image_ctx.cct;
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
   if (access(this->m_log_pool_name.c_str(), F_OK) != 0) {
@@ -351,7 +352,7 @@ void SSDWriteLog<I>::release_ram(std::shared_ptr<GenericLogEntry> log_entry) {
 }
 
 template <typename I>
-void SSDWriteLog<I>::load_existing_entries(rwl::DeferredContexts &later) {
+void SSDWriteLog<I>::load_existing_entries(pwl::DeferredContexts &later) {
   bufferlist bl;
   CephContext *cct = m_image_ctx.cct;
   ::IOContext ioctx(cct, nullptr);
@@ -931,7 +932,8 @@ void SSDWriteLog<I>::read_with_pos(uint64_t off, uint64_t len,
   bdev->read(off, length, bl, ioctx, false);
 }
 
+} // namespace pwl
 } // namespace cache
 } // namespace librbd
 
-template class librbd::cache::SSDWriteLog<librbd::ImageCtx>;
+template class librbd::cache::pwl::SSDWriteLog<librbd::ImageCtx>;
