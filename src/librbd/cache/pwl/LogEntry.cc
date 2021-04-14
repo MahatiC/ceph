@@ -46,10 +46,11 @@ std::ostream &operator<<(std::ostream &os,
 }
 
 bool GenericWriteLogEntry::can_writeback() const {
-  return (this->completed &&
+  return (this->completed);
+	 /* &&
           (ram_entry.sequenced ||
            (sync_point_entry &&
-            sync_point_entry->completed)));
+            sync_point_entry->completed)));*/
 }
 
 std::ostream& GenericWriteLogEntry::format(std::ostream &os) const {
@@ -89,11 +90,12 @@ void WriteLogEntry::init(bool has_data,
 }
 
 unsigned int WriteLogEntry::reader_count() const {
-  if (cache_bp.have_raw()) {
+  return 0; //TODO: revert later
+  /*if (cache_bp.have_raw()) {
     return (cache_bp.raw_nref() - bl_refs - 1);
   } else {
     return 0;
-  }
+  }*/
 }
 
 std::ostream& WriteLogEntry::format(std::ostream &os) const {

@@ -1427,14 +1427,15 @@ bool AbstractWriteLog<I>::check_allocation(C_BlockIORequestT *req,
   bool no_space = false;
   {
     std::lock_guard locker(m_lock);
-    if (m_free_lanes < num_lanes) {
+    
+    /*if (m_free_lanes < num_lanes) {
       req->set_io_waited_for_lanes(true);
       ldout(m_image_ctx.cct, 20) << "not enough free lanes (need "
                                  <<  num_lanes
                                  << ", have " << m_free_lanes << ") "
                                  << *req << dendl;
       alloc_succeeds = false;
-      /* This isn't considered a "no space" alloc fail. Lanes are a throttling mechanism. */
+      // This isn't considered a "no space" alloc fail. Lanes are a throttling mechanism.
     }
     if (m_free_log_entries < num_log_entries) {
       req->set_io_waited_for_entries(true);
@@ -1443,8 +1444,8 @@ bool AbstractWriteLog<I>::check_allocation(C_BlockIORequestT *req,
                                  << ", have " << m_free_log_entries << ") "
                                  << *req << dendl;
       alloc_succeeds = false;
-      no_space = true; /* Entries must be retired */
-    }
+      no_space = true; // Entries must be retired
+    }*/
     /* Don't attempt buffer allocate if we've exceeded the "full" threshold */
     if (m_bytes_allocated + bytes_allocated > bytes_allocated_cap) {
       if (!req->has_io_waited_for_buffers()) {
@@ -1568,8 +1569,13 @@ bool AbstractWriteLog<I>::can_flush_entry(std::shared_ptr<GenericLogEntry> log_e
 
   if (m_flush_ops_in_flight &&
       (log_entry->ram_entry.sync_gen_number > m_lowest_flushing_sync_gen)) {
+    ldout(cct, 20) << "cannot flush this entry." << dendl;
     return false;
   }
+  bool value = log_entry->can_writeback() &&
+         (m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
+         (m_flush_bytes_in_flight <= IN_FLIGHT_FLUSH_BYTES_LIMIT);
+  ldout(cct, 20) << "can_flush_this: " << value << dendl;
 
   return (log_entry->can_writeback() &&
          (m_flush_ops_in_flight <= IN_FLIGHT_FLUSH_WRITE_LIMIT) &&
@@ -2022,6 +2028,13 @@ bool AbstractWriteLog<I>::can_retire_entry(std::shared_ptr<GenericLogEntry> log_
 
   ldout(cct, 20) << dendl;
   ceph_assert(ceph_mutex_is_locked_by_me(m_lock));
+  bool value = log_entry->can_retire();
+  bool flushed = log_entry->get_flushed();
+  bool completed = log_entry->completed;
+  ldout(cct, 20) << "value: " << value
+	         << ",flushed: " << flushed
+		 << ",completed: " << completed
+		 << ",can_writeback: " << log_entry->can_writeback() << dendl;
   return log_entry->can_retire();
 }
 

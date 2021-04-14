@@ -320,8 +320,8 @@ protected:
   pwl::WriteLogMap m_blocks_to_log_entries;
 
   /* New entries are at the back. Oldest at the front */
-  pwl::GenericLogEntries m_log_entries;
-  pwl::GenericLogEntries m_dirty_log_entries;
+  pwl::GenericLogEntries m_log_entries; //log entries on disk + RAM == allocated
+  pwl::GenericLogEntries m_dirty_log_entries; //log entries on disk
 
   PerfCounters *m_perfcounter = nullptr;
 

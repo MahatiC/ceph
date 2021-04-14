@@ -42,6 +42,10 @@ public:
   virtual void set_flushed(bool flushed) {
     ceph_assert(false);
   }
+  //TODO: revert later
+  virtual bool get_flushed() const {
+    return false;
+  }
   virtual unsigned int write_bytes() const {
     return 0;
   };
@@ -144,7 +148,7 @@ public:
   void set_flushed(bool flushed) override {
     m_flushed = flushed;
   }
-  bool get_flushed() const {
+  bool get_flushed() const override {
     return m_flushed;
   }
   std::ostream &format(std::ostream &os) const;

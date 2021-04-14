@@ -25,6 +25,8 @@ void C_WriteRequest<T>::setup_buffer_resources(
   *number_lanes = image_extents_size;
   *number_log_entries = image_extents_size;
 
+  *bytes_allocated += image_extents_size * MIN_WRITE_ALLOC_SSD_SIZE;
+
   for (auto &extent : this->image_extents) {
     *bytes_cached += extent.second;
     *bytes_allocated += round_up_to(extent.second, MIN_WRITE_ALLOC_SSD_SIZE);
